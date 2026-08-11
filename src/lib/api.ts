@@ -27,16 +27,17 @@ export interface FetchJobOrdersOptions {
 export async function fetchJobOrders(
   opts: FetchJobOrdersOptions = {},
 ): Promise<JobOrder[]> {
-  const { top = 500, search, extraParams } = opts
+  const { top = null, search, extraParams } = opts
   const base = import.meta.env.VITE_API_URL
   const sep = base.includes('?') ? '&' : '?'
-  const params: string[] = [
-    `$select=${SELECT_FIELDS}`,
-    `$orderby=OrderHed_OrderNum desc,OrderDtl_OrderLine asc`,
-  ]
+  const orderby = `$orderby=OrderHed_OrderNum desc,OrderDtl_OrderLine asc`
 
-  if (top !== null && top > 0 && !search) {
-    params.push(`$top=${top}`)
+  const getPage = async (extra: Array<string | undefined>) => {
+    const params = [`$select=${SELECT_FIELDS}`, orderby, ...extra.filter((x): x is string => !!x)]
+    const res = await fetch(`${base}${sep}${params.join('&')}`, { headers: HEADERS })
+    if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
+    const json = await res.json()
+    return json.value ?? []
   }
 
   if (search && search.trim()) {
@@ -54,16 +55,24 @@ export async function fetchJobOrders(
     if (isNum) {
       filters.push(`OrderHed_OrderNum eq ${q}`)
     }
-    params.push(`$filter=${filters.join(' or ')}`)
+    return getPage([`$filter=${filters.join(' or ')}`, extraParams])
   }
 
-  if (extraParams) {
-    params.push(extraParams)
+  // Fetch everything: paginate server-side in batches so no rows are lost to
+  // a single $top cap (which is what made the table stop at ~124 parents).
+  if (top !== null && top > 0) {
+    return getPage([`$top=${top}`, extraParams])
   }
 
-  const qs = params.join('&')
-  const res = await fetch(`${base}${sep}${qs}`, { headers: HEADERS })
-  if (!res.ok) throw new Error(`HTTP ${res.status}: ${res.statusText}`)
-  const json = await res.json()
-  return json.value ?? []
+  const BATCH = 1000
+  const all: JobOrder[] = []
+  let skip = 0
+  for (;;) {
+    const page = await getPage([`$top=${BATCH}`, `$skip=${skip}`, extraParams])
+    all.push(...page)
+    if (page.length < BATCH) break
+    skip += BATCH
+    if (skip > 200000) break
+  }
+  return all
 }

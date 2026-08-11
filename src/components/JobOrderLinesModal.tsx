@@ -1,6 +1,7 @@
-import { X, FileText } from 'lucide-react'
+import { X, FileText, Layers } from 'lucide-react'
 import JobOrderTable from './JobOrderTable'
 import { padNum } from '@/utils/format'
+import { isPackingSheetReady } from '@/utils/batchValidation'
 import type { JobOrder, PalletInfo } from '@/types'
 import type { SessionUser } from '@/types'
 import Portal from './Portal'
@@ -25,6 +26,7 @@ interface Props {
   onAction: (row: JobOrder) => void
   onGeneratePdf?: (row: JobOrder) => void
   onPackingSheet?: (rows: JobOrder[]) => void
+  onCreateAll?: (rows: JobOrder[]) => void
   onClose: () => void
 }
 
@@ -32,9 +34,10 @@ export default function JobOrderLinesModal({
   company, orderNum, rows, cartonLots, cartonNums, palletData, creating, generating,
   columnFilters, showFilters, user,
   onSearch, onFilterChange, onToggleFilters, onClearFilters,
-  onRowClick, onAction, onGeneratePdf, onPackingSheet, onClose,
+  onRowClick, onAction, onGeneratePdf, onPackingSheet, onCreateAll, onClose,
 }: Props) {
   const createdCount = rows.filter((r) => cartonLots[`${r.JobHead_JobNum}|${r.OrderDtl_PartNum}`]).length
+  const packingReady = rows.length > 0 && rows.every((r) => isPackingSheetReady(r, cartonLots))
   return (
     <Portal>
     <div
@@ -77,10 +80,20 @@ export default function JobOrderLinesModal({
           </div>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <button
-              onClick={() => onPackingSheet?.(rows)}
+              onClick={() => onCreateAll?.(rows)}
               style={{ color: '#94a3b8', background: 'none', border: '1px solid #475569', cursor: 'pointer', padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, transition: 'all 0.15s' }}
               onMouseEnter={(e) => { e.currentTarget.style.color = '#fff'; e.currentTarget.style.borderColor = '#94a3b8' }}
               onMouseLeave={(e) => { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.borderColor = '#475569' }}
+            >
+              <Layers size={14} /> Create All
+            </button>
+            <button
+              onClick={() => onPackingSheet?.(rows)}
+              disabled={!packingReady}
+              title={packingReady ? undefined : 'All lines must have an internal lot number, a Job Num and Pcs/Inner & Inner/CTN values (excludes MFGSYS site).'}
+              style={{ color: packingReady ? '#94a3b8' : '#475569', background: 'none', border: '1px solid #475569', cursor: packingReady ? 'pointer' : 'not-allowed', padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, opacity: packingReady ? 1 : 0.5, transition: 'all 0.15s' }}
+              onMouseEnter={(e) => { if (packingReady) { e.currentTarget.style.color = '#fff'; e.currentTarget.style.borderColor = '#94a3b8' } }}
+              onMouseLeave={(e) => { if (packingReady) { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.borderColor = '#475569' } }}
             >
               <FileText size={14} /> Packing Sheet
             </button>

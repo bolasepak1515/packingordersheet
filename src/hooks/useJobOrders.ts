@@ -5,7 +5,7 @@ import { fetchJobOrders } from '@/lib/api'
 import { insertPackingTrans, updatePackingTrans } from '@/lib/db'
 import type { JobOrder, PackingOrderTrans } from '@/types'
 
-export const JOB_ORDERS_DEFAULT_TOP = 500
+export const JOB_ORDERS_DEFAULT_TOP: number | null = null
 
 export function useJobOrders(search = '', top: number | null = JOB_ORDERS_DEFAULT_TOP) {
   return useQuery<JobOrder[], Error>({
@@ -24,14 +24,15 @@ export type SavePackingTransVars =
   | { mode: 'insert'; payload: Partial<PackingOrderTrans> }
   | { mode: 'update'; jobNum: string; part: string; payload: Partial<PackingOrderTrans> }
 
-export function useSavePackingTrans() {
+export function useSavePackingTrans(options?: { invalidateOnSuccess?: boolean }) {
+  const invalidateOnSuccess = options?.invalidateOnSuccess ?? true
   return useMutation<void, Error, SavePackingTransVars>({
     mutationFn: (vars) =>
       vars.mode === 'insert'
         ? insertPackingTrans(vars.payload)
         : updatePackingTrans(vars.jobNum, vars.part, vars.payload),
     onSuccess: () => {
-      void queryClient.invalidateQueries({ queryKey: queryKeys.packingTrans.all })
+      if (invalidateOnSuccess) void queryClient.invalidateQueries({ queryKey: queryKeys.packingTrans.all })
     },
   })
 }

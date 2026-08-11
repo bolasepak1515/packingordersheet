@@ -1,8 +1,10 @@
 import { memo, useMemo, useState } from 'react'
-import { Check } from 'lucide-react'
+import { Check, Layers, FileText } from 'lucide-react'
 import { formatDateOrRaw } from '@/utils/format'
 import DataTable from './DataTable'
 import SearchBox from './SearchBox'
+import ActionMenu from './ActionMenu'
+import type { ActionMenuItem } from './ActionMenu'
 import type { Column } from './DataTable'
 
 export interface PlantPackingEntry {
@@ -67,6 +69,7 @@ export interface ParentOrder {
   notAssignSiteCount: number
   noJobCount: number
   totalCtn: number
+  packingReady: boolean
   plantPacking: PlantPackingEntry[]
 }
 
@@ -74,15 +77,18 @@ interface Props {
   rows: ParentOrder[]
   columnFilters: Record<string, string>
   showFilters: boolean
+  loading?: boolean
   onSearch: (val: string) => void
   onFilterChange: (key: string, val: string) => void
   onToggleFilters: () => void
   onClearFilters: () => void
   onRowClick: (parent: ParentOrder) => void
+  onCreateAll?: (parent: ParentOrder) => void
+  onPackingSheet?: (parent: ParentOrder) => void
 }
 
 function JobOrderParentTable({
-  rows, columnFilters, showFilters, onSearch, onFilterChange, onToggleFilters, onClearFilters, onRowClick,
+  rows, columnFilters, showFilters, loading, onSearch, onFilterChange, onToggleFilters, onClearFilters, onRowClick, onCreateAll, onPackingSheet,
 }: Props) {
   const [search, setSearch] = useState('')
 
@@ -209,7 +215,23 @@ function JobOrderParentTable({
         </div>
       )
     } },
-  ], [])
+    ...(onCreateAll ? [{
+      key: 'Actions', label: 'Actions', filterable: false, align: 'center' as const, stickyRight: true,
+      render: (r: ParentOrder) => {
+        const items: ActionMenuItem[] = [
+          ...(onPackingSheet ? [{
+            label: 'Packing Sheet',
+            icon: FileText,
+            disabled: !r.packingReady,
+            title: r.packingReady ? undefined : 'All lines must have an internal lot number, a Job Num and Pcs/Inner & Inner/CTN values (excludes MFGSYS site).',
+            onClick: () => onPackingSheet(r),
+          }] : []),
+          { label: 'Create All Lots', icon: Layers, onClick: () => onCreateAll(r) },
+        ]
+        return <ActionMenu items={items} />
+      },
+    }] : []),
+  ], [onCreateAll, onRowClick, onPackingSheet])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%' }}>
@@ -226,6 +248,7 @@ function JobOrderParentTable({
         data={rows}
         keyFn={(r) => `${r.company}|${r.orderNum}`}
         onRowClick={onRowClick}
+        loading={loading}
         pageSize={25}
         pageSizeOptions={[25, 50, 100, 200]}
         filterRow={showFilters}

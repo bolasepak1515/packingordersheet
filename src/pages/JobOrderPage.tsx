@@ -1,17 +1,19 @@
 import { useState, useEffect, useMemo, useCallback, useDeferredValue } from 'react'
 import { RefreshCw, Search } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
+import { queryClient } from '@/lib/queryClient'
+import { queryKeys } from '@/hooks/queryKeys'
 import { useJobOrders, useSavePackingTrans } from '@/hooks/useJobOrders'
 import { usePlantCodes, useSizes, usePackingTrans } from '@/hooks/useMasterData'
-import { getWeekNumber } from '@/utils/weekNumber'
-import { parseLineDesc, extractSizeFromPartNum, padNum } from '@/utils/format'
+import { validateJobOrderLine, calculateLinePreviewData, isPackingSheetReady } from '@/utils/batchValidation'
+import type { BatchLineStatus, LinePreviewData } from '@/utils/batchValidation'
 import { useAuth } from '@/contexts/AuthContext'
 import Message from '@/components/Message'
 import Button from '@/components/Button'
-import { TableSkeleton } from '@/components/Skeleton'
 import JobOrderParentTable from '@/components/JobOrderParentTable'
 import JobOrderLinesModal from '@/components/JobOrderLinesModal'
 import PackingSheetOptionsModal from '@/components/PackingSheetOptionsModal'
+import BatchProgressModal from '@/components/BatchProgressModal'
 import type { ParentOrder } from '@/components/JobOrderParentTable'
 import JobOrderDetailModal from '@/components/JobOrderDetailModal'
 import JobOrderEditModal from '@/components/JobOrderEditModal'
@@ -29,6 +31,7 @@ export default function JobOrderPage() {
   const { data: sizeLookup = [] } = useSizes()
   const { data: packingTrans = [] } = usePackingTrans()
   const savePackingTrans = useSavePackingTrans()
+  const batchSavePackingTrans = useSavePackingTrans({ invalidateOnSuccess: false })
   const [error, setError] = useState<string | null>(null)
   const [search, setSearch] = useState('')
   const [showFilters, setShowFilters] = useState(false)
@@ -46,6 +49,13 @@ export default function JobOrderPage() {
   const [creatingPreview, setCreatingPreview] = useState(false)
   const [parentOpen, setParentOpen] = useState<{ company: string; orderNum: number } | null>(null)
   const [packingSheetRows, setPackingSheetRows] = useState<JobOrder[] | null>(null)
+
+  const [batchState, setBatchState] = useState<{ company: string; orderNum: number; lines: JobOrder[] } | null>(null)
+  const [batchPlantFilter, setBatchPlantFilter] = useState('')
+  const [batchStatus, setBatchStatus] = useState<Record<string, BatchLineStatus>>({})
+  const [batchReasons, setBatchReasons] = useState<Record<string, string>>({})
+  const [batchDetails, setBatchDetails] = useState<Record<string, LinePreviewData>>({})
+  const [batchRunning, setBatchRunning] = useState(false)
 
   // Keep typing smooth: filtering lags slightly behind keystrokes while the
   // deferred value (and thus the filtered dataset) catches up.
@@ -75,6 +85,14 @@ export default function JobOrderPage() {
     for (const s of sizeLookup) m[s.size_name] = String(s.size_code)
     return m
   }, [sizeLookup])
+
+  const runningPalletMap = useMemo(() => {
+    const m: Record<string, number> = {}
+    for (const p of plantLookup) {
+      if (p.plant_name) m[p.plant_name] = parseInt(p.running_pallet ?? '') || 0
+    }
+    return m
+  }, [plantLookup])
 
   const { cartonLots, palletData, cartonNums } = useMemo(() => {
     const cl: Record<string, string> = {}
@@ -160,6 +178,12 @@ export default function JobOrderPage() {
     setParentOpen({ company: p.company, orderNum: p.orderNum })
   }, [])
 
+  const handleParentPackingSheet = useCallback((p: ParentOrder) => {
+    const rows = (data ?? []).filter((d) => d.OrderHed_Company === p.company && d.OrderHed_OrderNum === p.orderNum)
+    if (rows.length === 0) return
+    handlePackingSheetClick(rows)
+  }, [data, handlePackingSheetClick])
+
   const parentBase = useMemo(() => (data ?? []).filter(matchesSearch), [data, matchesSearch])
 
   const filtered = useMemo(() =>
@@ -187,11 +211,12 @@ export default function JobOrderPage() {
       const key = `${d.OrderHed_Company}|${d.OrderHed_OrderNum}`
       let g = map.get(key)
       if (!g) {
-        g = { company: d.OrderHed_Company, orderNum: d.OrderHed_OrderNum, orderDate: '', needBy: '', poNum: '', lineCount: 0, createdCount: 0, notAssignSiteCount: 0, noJobCount: 0, totalCtn: 0, plantPacking: [], ppCounts: new Map(), ppCreated: new Map() }
+        g = { company: d.OrderHed_Company, orderNum: d.OrderHed_OrderNum, orderDate: '', needBy: '', poNum: '', lineCount: 0, createdCount: 0, notAssignSiteCount: 0, noJobCount: 0, totalCtn: 0, packingReady: true, plantPacking: [], ppCounts: new Map(), ppCreated: new Map() }
         map.set(key, g)
       }
       g.lineCount++
       if (!d.JobHead_JobNum) g.noJobCount++
+      if (!isPackingSheetReady(d, cartonLots)) g.packingReady = false
       if (cartonLots[`${d.JobHead_JobNum}|${d.OrderDtl_PartNum}`]) g.createdCount++
       if (!g.orderDate && d.OrderHed_OrderDate) g.orderDate = d.OrderHed_OrderDate
       if (!g.needBy && d.OrderDtl_NeedByDate) g.needBy = d.OrderDtl_NeedByDate
@@ -280,60 +305,8 @@ export default function JobOrderPage() {
       .from('plantcode').select('running_pallet').eq('plant_name', row.JobHead_Plant).single()
     if (pcErr) { alert('plantcode lookup failed: ' + pcErr.message); setCreating((prev) => ({ ...prev, [k]: false })); return }
 
-    const plantValue = plantMap[row.JobHead_Plant] ?? row.JobHead_Plant
-    const now = new Date()
-    const yearDigit = String(now.getFullYear()).slice(-1)
-    const weekStr = String(getWeekNumber(now)).padStart(2, '0')
-    const sizeName = extractSizeFromPartNum(row.OrderDtl_PartNum)
-    const sizeCode = sizeMap[sizeName] ?? ''
-    const lot = `${plantValue}${yearDigit}${weekStr}${sizeCode}`
     const runningPallet = parseInt(pcData?.running_pallet) || 0
-    const startPallet = runningPallet + 1
-    const parsed = parseLineDesc(row.OrderDtl_LineDesc || '')
-    const qi = parseInt(parsed.qtyInner) || row.OrderDtl_FS_PcsPerBox_c || 0
-    const qc = parseInt(parsed.qtyCarton) || row.OrderDtl_FS_BoxPerCarton_c || 0
-    const threshold = qi * qc
-    const pages = threshold >= 1000 ? Math.ceil((row.OrderDtl_OrderQty || 0) / 50) : Math.ceil((row.OrderDtl_OrderQty || 0) / 25)
-    const pallets = Math.ceil(pages / (threshold >= 1000 ? 2 : 4))
-    const endPallet = startPallet + pallets - 1
-
-    // Cumulative carton range across order lines
-    let cartonStart = 0, cartonEnd = 0
-    if (qi && qc) {
-      const cartons = Math.floor(((row.OrderDtl_OrderQty || 0) * 1000) / (qi * qc))
-      let prev = 0
-      const allRows = data ?? []
-      for (const r of allRows) {
-        if (r.OrderHed_Company !== row.OrderHed_Company || r.OrderHed_OrderNum !== row.OrderHed_OrderNum) continue
-        if (r.OrderDtl_OrderLine >= row.OrderDtl_OrderLine) break
-        const p = parseLineDesc(r.OrderDtl_LineDesc || '')
-        const qi2 = parseInt(p.qtyInner) || r.OrderDtl_FS_PcsPerBox_c || 0
-        const qc2 = parseInt(p.qtyCarton) || r.OrderDtl_FS_BoxPerCarton_c || 0
-        if (qi2 && qc2) prev += Math.floor(((r.OrderDtl_OrderQty || 0) * 1000) / (qi2 * qc2))
-      }
-      cartonStart = prev + 1
-      cartonEnd = prev + cartons
-    }
-
-    setPreviewData({
-      jobNum: row.JobHead_JobNum,
-      partNum: row.OrderDtl_PartNum,
-      orderNum: row.OrderHed_OrderNum,
-      orderLine: row.OrderDtl_OrderLine,
-      company: row.OrderHed_Company,
-      lotId: lot,
-      internalLot: row.OrderDtl_FS_LotNumber_c ?? '',
-      startPallet,
-      endPallet,
-      pages,
-      pcsPerBox: qi,
-      boxPerCarton: qc,
-      totalCtn: row.Calculated_Total_CTN ?? 0,
-      orderQty: row.OrderDtl_OrderQty ?? 0,
-      cartonStart,
-      cartonEnd,
-      cartonNumber: cartonEnd > 0 ? `${padNum(cartonStart, 5)} - ${padNum(cartonEnd, 5)}` : '',
-    })
+    setPreviewData(calculateLinePreviewData(row, { runningPallet, plantMap, sizeMap, allRows: data ?? [] }))
     setPreviewRow(row)
     setCreating((prev) => ({ ...prev, [k]: false }))
   }
@@ -365,6 +338,142 @@ export default function JobOrderPage() {
     setCreatingPreview(false)
     setPreviewRow(null)
     setPreviewData(null)
+  }
+
+  const handleCreateAll = useCallback((company: string, orderNum: number) => {
+    const lines = (data ?? []).filter((d) => d.OrderHed_Company === company && d.OrderHed_OrderNum === orderNum)
+    if (lines.length === 0) { alert('No lines found for this order.'); return }
+    setBatchState({ company, orderNum, lines })
+    setBatchPlantFilter('')
+    setBatchStatus({})
+    setBatchReasons({})
+    setBatchDetails({})
+  }, [data])
+
+  const handleBatchPlantFilter = useCallback((val: string) => {
+    setBatchPlantFilter(val)
+    if (!batchState) return
+    const status: Record<string, BatchLineStatus> = {}
+    const reasons: Record<string, string> = {}
+    for (const line of batchState.lines) {
+      const key = `${line.JobHead_JobNum}|${line.OrderDtl_PartNum}`
+      const res = validateJobOrderLine(line, { cartonLots, userRole: user?.role, userSite: user?.site, plantFilter: val })
+      status[key] = res.status
+      reasons[key] = res.reason
+    }
+    setBatchStatus(status)
+    setBatchReasons(reasons)
+    setBatchDetails({})
+  }, [batchState, cartonLots, user])
+
+  const batchValidated = useMemo(() => {
+    if (!batchState) return []
+    const runningByPlant: Record<string, number> = { ...runningPalletMap }
+    return batchState.lines.map((line) => {
+      const key = `${line.JobHead_JobNum}|${line.OrderDtl_PartNum}`
+      const live = batchStatus[key]
+      const res = live && live !== 'pending'
+        ? null
+        : validateJobOrderLine(line, { cartonLots, userRole: user?.role, userSite: user?.site, plantFilter: batchPlantFilter })
+      const status = live ?? res?.status ?? 'pending'
+      const isTarget = status === 'pending' ? !!res?.valid : status === 'creating' || status === 'completed'
+      let detail = batchDetails[key]
+      if (!detail && isTarget) {
+        const plant = line.JobHead_Plant
+        detail = calculateLinePreviewData(line, {
+          runningPallet: runningByPlant[plant] ?? 0,
+          plantMap,
+          sizeMap,
+          allRows: batchState.lines,
+        })
+        if (detail.pages > 0) runningByPlant[plant] = detail.endPallet
+      } else if (detail && (status === 'creating' || status === 'completed')) {
+        const plant = line.JobHead_Plant
+        if (detail.pages > 0) runningByPlant[plant] = detail.endPallet
+      }
+      return {
+        key,
+        row: line,
+        status,
+        reason: live === 'skipped' ? (batchReasons[key] ?? '') : res ? res.reason : '',
+        detail,
+      }
+    })
+  }, [batchState, batchStatus, batchReasons, batchDetails, batchPlantFilter, cartonLots, user, runningPalletMap, plantMap, sizeMap])
+
+  const availableBatchPlants = useMemo(() => {
+    if (!batchState) return []
+    const seen = new Set<string>()
+    for (const line of batchState.lines) {
+      if (line.JobHead_Plant) seen.add(line.JobHead_Plant)
+    }
+    return Array.from(seen).sort()
+  }, [batchState])
+
+  const handleBatchConfirm = async () => {
+    if (!batchState || batchRunning) return
+    const targets = batchState.lines.filter((line) =>
+      validateJobOrderLine(line, { cartonLots, userRole: user?.role, userSite: user?.site, plantFilter: batchPlantFilter }).valid,
+    )
+    if (targets.length === 0) return
+
+    setBatchRunning(true)
+    try {
+      for (const line of targets) {
+        const key = `${line.JobHead_JobNum}|${line.OrderDtl_PartNum}`
+        setBatchStatus((p) => ({ ...p, [key]: 'creating' }))
+        setBatchReasons((p) => ({ ...p, [key]: '' }))
+        try {
+          const { data: pcData, error: pcErr } = await supabase
+            .from('plantcode').select('running_pallet').eq('plant_name', line.JobHead_Plant).single()
+          if (pcErr) throw new Error('plantcode lookup failed: ' + pcErr.message)
+
+          const preview = calculateLinePreviewData(line, {
+            runningPallet: parseInt(pcData?.running_pallet) || 0,
+            plantMap,
+            sizeMap,
+            allRows: batchState.lines,
+          })
+
+          await batchSavePackingTrans.mutateAsync({
+            mode: 'insert',
+            payload: {
+              job_num: line.JobHead_JobNum,
+              part: line.OrderDtl_PartNum,
+              cartonlot: preview.lotId,
+              startpallet: preview.pages > 0 ? preview.startPallet : null,
+              endpallet: preview.pages > 0 ? preview.endPallet : null,
+              carton_number: preview.cartonNumber,
+            },
+          })
+
+          if (preview.pages > 0) {
+            const { error: updErr } = await supabase
+              .from('plantcode').update({ running_pallet: String(preview.endPallet) }).eq('plant_name', line.JobHead_Plant)
+            if (updErr) throw new Error('plantcode update failed: ' + updErr.message)
+          }
+
+          setBatchDetails((p) => ({ ...p, [key]: preview }))
+          setBatchStatus((p) => ({ ...p, [key]: 'completed' }))
+        } catch (err: unknown) {
+          setBatchStatus((p) => ({ ...p, [key]: 'failed' }))
+          setBatchReasons((p) => ({ ...p, [key]: err instanceof Error ? err.message : String(err) }))
+        }
+      }
+    } finally {
+      setBatchRunning(false)
+      void queryClient.invalidateQueries({ queryKey: queryKeys.packingTrans.all })
+      void queryClient.invalidateQueries({ queryKey: queryKeys.plantCodes.all })
+    }
+  }
+
+  const handleBatchClose = () => {
+    if (batchRunning) return
+    setBatchState(null)
+    setBatchPlantFilter('')
+    setBatchStatus({})
+    setBatchReasons({})
+    setBatchDetails({})
   }
 
   const handleGeneratePdf = useCallback((row: JobOrder) => {
@@ -419,20 +528,19 @@ export default function JobOrderPage() {
       {successMsg && <Message msg={{ text: successMsg, type: 'success' }} />}
       {error && <Message msg={{ text: error, type: 'error' }} />}
 
-      {isLoading && !data ? (
-        <TableSkeleton rows={8} cols={6} />
-      ) : (
-        <JobOrderParentTable
-          rows={parentRows}
-          columnFilters={parentColumnFilters}
-          showFilters={parentShowFilters}
-          onSearch={setSearch}
-          onFilterChange={handleParentFilterChange}
-          onToggleFilters={handleParentToggleFilters}
-          onClearFilters={handleParentClearFilters}
-          onRowClick={handleParentRowClick}
-        />
-      )}
+      <JobOrderParentTable
+        rows={parentRows}
+        columnFilters={parentColumnFilters}
+        showFilters={parentShowFilters}
+        loading={isLoading}
+        onSearch={setSearch}
+        onFilterChange={handleParentFilterChange}
+        onToggleFilters={handleParentToggleFilters}
+        onClearFilters={handleParentClearFilters}
+        onRowClick={handleParentRowClick}
+        onCreateAll={(p) => handleCreateAll(p.company, p.orderNum)}
+        onPackingSheet={handleParentPackingSheet}
+      />
 
       {parentOpen && (
         <JobOrderLinesModal
@@ -455,6 +563,7 @@ export default function JobOrderPage() {
           onAction={handleAction}
           onGeneratePdf={handleGeneratePdf}
           onPackingSheet={handlePackingSheetClick}
+          onCreateAll={() => parentOpen && handleCreateAll(parentOpen.company, parentOpen.orderNum)}
           onClose={() => setParentOpen(null)}
         />
       )}
@@ -496,6 +605,21 @@ export default function JobOrderPage() {
           loading={creatingPreview}
           onConfirm={handleConfirmCreate}
           onClose={() => { setPreviewRow(null); setPreviewData(null) }}
+        />
+      )}
+
+      {batchState && (
+        <BatchProgressModal
+          company={batchState.company}
+          orderNum={String(batchState.orderNum).padStart(9, '0')}
+          lines={batchValidated}
+          running={batchRunning}
+          isAdmin={user?.role === 'admin'}
+          plants={availableBatchPlants}
+          plantFilter={batchPlantFilter}
+          onPlantFilterChange={handleBatchPlantFilter}
+          onConfirm={handleBatchConfirm}
+          onClose={handleBatchClose}
         />
       )}
 

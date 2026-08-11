@@ -1,6 +1,5 @@
 import { memo, useState, useEffect } from 'react'
 import { ArrowUp, ArrowDown, ChevronLeft, ChevronRight, SearchX, X } from 'lucide-react'
-import { TableSkeleton } from './Skeleton'
 
 export interface Column<T> {
   key: string
@@ -31,6 +30,9 @@ interface DataTableProps<T> {
   rowStyle?: (row: T, index: number) => React.CSSProperties | undefined
   defaultSortCol?: string
   defaultSortDir?: 'asc' | 'desc'
+  reveal?: boolean
+  revealStep?: number
+  revealInterval?: number
 }
 
 const HEADER_H = 38
@@ -64,6 +66,7 @@ function DataTable<T>({
   filterRow = false, filterValues, onFilterChange, onClearFilters,
   loading = false, dense: denseProp, rowStyle,
   defaultSortCol, defaultSortDir = 'asc',
+  reveal = false, revealStep = 25, revealInterval = 250,
 }: DataTableProps<T>) {
   const [page, setPage] = useState(1)
   const [size, setSize] = useState(ps || 25)
@@ -71,6 +74,7 @@ function DataTable<T>({
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(defaultSortDir)
   const [hoverKey, setHoverKey] = useState<React.Key | null>(null)
   const [filterFocus, setFilterFocus] = useState<string | null>(null)
+  const [visible, setVisible] = useState(() => (reveal ? Math.min(revealStep, data.length) : data.length))
   const isDense = denseProp ?? false
   const pad = isDense ? '6px 12px' : '12px 16px'
   const headPad = isDense ? '0 12px' : '0 16px'
@@ -82,6 +86,17 @@ function DataTable<T>({
     const maxPage = Math.ceil(data.length / pageSize) || 1
     if (page > maxPage) setPage(1)
   }, [data.length, pageSize])
+
+  useEffect(() => {
+    if (!reveal) return
+    setVisible(Math.min(revealStep, data.length))
+  }, [reveal, revealStep, data.length])
+
+  useEffect(() => {
+    if (!reveal || visible >= data.length) return
+    const t = setTimeout(() => setVisible((v) => Math.min(v + revealStep, data.length)), revealInterval)
+    return () => clearTimeout(t)
+  }, [reveal, visible, data.length, revealStep, revealInterval])
 
   const sorted = sortCol
     ? [...data].sort((a, b) => {
@@ -95,7 +110,9 @@ function DataTable<T>({
     : data
 
   const totalPages = Math.ceil(sorted.length / pageSize) || 1
-  const paged = pageSize ? sorted.slice((page - 1) * pageSize, page * pageSize) : sorted
+  const paged = reveal
+    ? sorted.slice(0, visible)
+    : pageSize ? sorted.slice((page - 1) * pageSize, page * pageSize) : sorted
 
   function handleSort(key: string) {
     if (sortCol === key) setSortDir((d) => (d === 'asc' ? 'desc' : 'asc'))
@@ -103,8 +120,6 @@ function DataTable<T>({
   }
 
   const hasActiveFilters = filterValues && Object.values(filterValues).some((v) => v)
-
-  if (loading) return <TableSkeleton rows={8} cols={columns.length} />
 
   const rowStart = sorted.length === 0 ? 0 : (page - 1) * pageSize + 1
   const rowEnd = Math.min(page * pageSize, sorted.length)
@@ -255,22 +270,35 @@ function DataTable<T>({
           </thead>
           <tbody>
             {paged.length === 0 ? (
-              <tr>
-                <td colSpan={columns.length} style={{ textAlign: 'center', padding: '64px 24px' }}>
-                  <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, color: 'var(--text-tertiary)' }}>
-                    <div style={{
-                      width: 48, height: 48, borderRadius: '50%',
-                      background: 'var(--accent-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center',
-                    }}>
-                      <SearchX size={22} strokeWidth={1.5} />
+              loading ? (
+                <tr>
+                  <td colSpan={columns.length} style={{ textAlign: 'center', padding: '48px 24px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, color: 'var(--text-tertiary)' }}>
+                      <svg width={20} height={20} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: 'btnSpin 0.7s linear infinite' }}>
+                        <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
+                      </svg>
+                      <span style={{ fontSize: 13, color: 'var(--text-secondary)' }}>Loading data…</span>
                     </div>
-                    <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-secondary)' }}>{String(emptyMsg)}</span>
-                    {hasActiveFilters && (
-                      <span style={{ fontSize: 12 }}>Try adjusting or clearing the active filters.</span>
-                    )}
-                  </div>
-                </td>
-              </tr>
+                  </td>
+                </tr>
+              ) : (
+                <tr>
+                  <td colSpan={columns.length} style={{ textAlign: 'center', padding: '64px 24px' }}>
+                    <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 10, color: 'var(--text-tertiary)' }}>
+                      <div style={{
+                        width: 48, height: 48, borderRadius: '50%',
+                        background: 'var(--accent-soft)', display: 'flex', alignItems: 'center', justifyContent: 'center',
+                      }}>
+                        <SearchX size={22} strokeWidth={1.5} />
+                      </div>
+                      <span style={{ fontSize: 14, fontWeight: 500, color: 'var(--text-secondary)' }}>{String(emptyMsg)}</span>
+                      {hasActiveFilters && (
+                        <span style={{ fontSize: 12 }}>Try adjusting or clearing the active filters.</span>
+                      )}
+                    </div>
+                  </td>
+                </tr>
+              )
             ) : (
               paged.map((row, i) => {
                 const key = getKey(row, i)
@@ -314,12 +342,24 @@ function DataTable<T>({
                 )
               })
             )}
+            {reveal && !loading && visible < sorted.length && (
+              <tr>
+                <td colSpan={columns.length} style={{ textAlign: 'center', padding: 14, color: 'var(--text-tertiary)', fontSize: 12, borderBottom: 'none' }}>
+                  <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+                    <svg width={14} height={14} viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" style={{ animation: 'btnSpin 0.7s linear infinite' }}>
+                      <path d="M21 12a9 9 0 11-6.219-8.56" strokeLinecap="round" />
+                    </svg>
+                    Loading more rows… {visible.toLocaleString()} of {sorted.length.toLocaleString()}
+                  </span>
+                </td>
+              </tr>
+            )}
           </tbody>
         </table>
       </div>
 
       {/* Pagination */}
-      {pageSize > 0 && (
+      {pageSize > 0 && !reveal && (
         <div
           style={{
             padding: '10px 16px',

@@ -1,30 +1,7 @@
 import { useCallback, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
-import {
-  fetchPlantCodes,
-  fetchSizes,
-  fetchPackingTrans,
-  fetchPlantLookup,
-  fetchSizeLookup,
-  fetchLoginUsers,
-  fetchTagTemplate,
-  fetchPackingSheetTemplate,
-  createPlantCode,
-  updatePlantCode,
-  deletePlantCode,
-  createSize,
-  updateSize,
-  deleteSize,
-  createLoginUser,
-  updateLoginUser,
-  deleteLoginUser,
-  saveTagTemplate,
-  savePackingSheetTemplate,
-  type TagTemplateRow,
-} from '@/lib/db'
-import { fetchJobOrders } from '@/lib/api'
+import { fetchPlantCodes, fetchSizes, fetchPackingTrans, fetchLoginUsers, fetchTagTemplate, fetchPackingSheetTemplate, createPlantCode, updatePlantCode, deletePlantCode, createSize, updateSize, deleteSize, createLoginUser, updateLoginUser, deleteLoginUser, saveTagTemplate, savePackingSheetTemplate, type TagTemplateRow } from '@/lib/db'
 import { queryKeys } from './queryKeys'
-import { JOB_ORDERS_DEFAULT_TOP } from './useJobOrders'
 import type { PlantCode, Size, LoginRow, PackingOrderTrans } from '@/types'
 import type { TagElement } from '@/components/tagbuilder/types'
 
@@ -49,20 +26,6 @@ export function usePackingTrans() {
   return useQuery<PackingTransRow[], Error>({
     queryKey: queryKeys.packingTrans.all,
     queryFn: () => fetchPackingTrans(),
-  })
-}
-
-export function usePlantLookup() {
-  return useQuery({
-    queryKey: queryKeys.plantCodes.lookup,
-    queryFn: () => fetchPlantLookup(),
-  })
-}
-
-export function useSizeLookup() {
-  return useQuery({
-    queryKey: queryKeys.sizes.lookup,
-    queryFn: () => fetchSizeLookup(),
   })
 }
 
@@ -203,15 +166,17 @@ export function useSavePackingSheetTemplate() {
   })
 }
 
-/** Hook to prefetch all master data on app initialization/layout mount */
+/**
+ * Hook to prefetch master data on app initialization/layout mount.
+ * Only lightweight lookup tables are prefetched so app boot stays fast —
+ * the heavy Job Order dataset is streamed lazily by the Job Order page.
+ */
 export function usePrefetchMasterData() {
   const queryClient = useQueryClient()
 
   useEffect(() => {
-    queryClient.prefetchQuery({ queryKey: queryKeys.jobOrders.list('', JOB_ORDERS_DEFAULT_TOP), queryFn: () => fetchJobOrders({ top: JOB_ORDERS_DEFAULT_TOP }) })
     queryClient.prefetchQuery({ queryKey: queryKeys.plantCodes.all, queryFn: () => fetchPlantCodes() })
     queryClient.prefetchQuery({ queryKey: queryKeys.sizes.all, queryFn: () => fetchSizes() })
-    queryClient.prefetchQuery({ queryKey: queryKeys.packingTrans.all, queryFn: () => fetchPackingTrans() })
     queryClient.prefetchQuery({ queryKey: queryKeys.templates.tag, queryFn: () => fetchTagTemplate() })
     queryClient.prefetchQuery({ queryKey: queryKeys.templates.packingSheet, queryFn: () => fetchPackingSheetTemplate() })
   }, [queryClient])
@@ -224,7 +189,6 @@ export function usePrefetchRouteData() {
     (path: string) => {
       switch (path) {
         case '/joborder':
-          void queryClient.prefetchQuery({ queryKey: queryKeys.jobOrders.list('', JOB_ORDERS_DEFAULT_TOP), queryFn: () => fetchJobOrders({ top: JOB_ORDERS_DEFAULT_TOP }) })
           void queryClient.prefetchQuery({ queryKey: queryKeys.packingTrans.all, queryFn: () => fetchPackingTrans() })
           break
         case '/plantcode':

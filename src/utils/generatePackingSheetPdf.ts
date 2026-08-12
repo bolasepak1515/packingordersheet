@@ -2,7 +2,7 @@ import QRCode from 'qrcode'
 import JsBarcode from 'jsbarcode'
 import { getWeekNumber } from '@/utils/weekNumber'
 import { formatDate, extractSizeFromPartNum, extractBasePartGroup, padNum, parseLineDesc } from '@/utils/format'
-import type { JobOrder, PackingOrderTrans } from '@/types'
+import type { JobOrder, PackingOrderTrans, Size } from '@/types'
 import { fetchPackingSheetTemplate, fetchSizeLookup, fetchPackingTransByJob } from '@/lib/db'
 import { queryClient } from '@/lib/queryClient'
 import { queryKeys } from '@/hooks/queryKeys'
@@ -352,7 +352,7 @@ export async function generatePackingSheetPdf(lines: JobOrder[], options?: Packi
   const yearDigit = String(now.getFullYear()).slice(-1)
   const weekStr = String(getWeekNumber(now)).padStart(2, '0')
 
-  let sizeRows = queryClient.getQueryData<Awaited<ReturnType<typeof fetchSizeLookup>>>(queryKeys.sizes.lookup)
+  let sizeRows = queryClient.getQueryData<Pick<Size, 'size_name' | 'size_code'>[]>(queryKeys.sizes.all)
   if (!sizeRows) sizeRows = await fetchSizeLookup()
   const sizeMap = new Map((sizeRows ?? []).map((s) => [s.size_name, String(s.size_code)]))
 

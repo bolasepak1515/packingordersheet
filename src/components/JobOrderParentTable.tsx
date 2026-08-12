@@ -1,5 +1,5 @@
 import { memo, useMemo, useState } from 'react'
-import { Check, Layers, FileText } from 'lucide-react'
+import { Check, Layers, FileText, RefreshCw } from 'lucide-react'
 import { formatDateOrRaw } from '@/utils/format'
 import DataTable from './DataTable'
 import SearchBox from './SearchBox'
@@ -78,6 +78,8 @@ interface Props {
   columnFilters: Record<string, string>
   showFilters: boolean
   loading?: boolean
+  isSyncing?: boolean
+  syncedCount?: number
   onSearch: (val: string) => void
   onFilterChange: (key: string, val: string) => void
   onToggleFilters: () => void
@@ -88,7 +90,7 @@ interface Props {
 }
 
 function JobOrderParentTable({
-  rows, columnFilters, showFilters, loading, onSearch, onFilterChange, onToggleFilters, onClearFilters, onRowClick, onCreateAll, onPackingSheet,
+  rows, columnFilters, showFilters, loading, isSyncing, syncedCount, onSearch, onFilterChange, onToggleFilters, onClearFilters, onRowClick, onCreateAll, onPackingSheet,
 }: Props) {
   const [search, setSearch] = useState('')
 
@@ -242,6 +244,21 @@ function JobOrderParentTable({
         showFilters={showFilters}
         onToggleFilters={onToggleFilters}
       />
+
+      {isSyncing && (
+        <div
+          style={{
+            display: 'inline-flex', alignItems: 'center', gap: 8,
+            alignSelf: 'flex-start',
+            padding: '6px 12px', fontSize: 12, fontWeight: 600, whiteSpace: 'nowrap',
+            borderRadius: 100, background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe',
+          }}
+          role="status"
+        >
+          <RefreshCw size={12} className="spin" />
+          Syncing data ({syncedCount?.toLocaleString() ?? 0} loaded)...
+        </div>
+      )}
 
       <DataTable<ParentOrder>
         columns={columns}

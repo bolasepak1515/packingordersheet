@@ -56,6 +56,7 @@ export const TOKENS = [
   { token: '{needBy}', label: 'Need By Date' },
   { token: '{size}', label: 'Size Code' },
   { token: '{plant}', label: 'Plant Code' },
+  { token: '{packagingMaterial}', label: 'Packaging Material' },
   { token: '{date}', label: 'Print Date' },
   { token: '{p}', label: 'Page Number' },
   { token: '{total}', label: 'Total Pages' },

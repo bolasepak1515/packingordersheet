@@ -1,4 +1,4 @@
-import { createContext, useContext, useState, useEffect, useCallback, type ReactNode } from 'react'
+import { createContext, useContext, useState, useCallback, type ReactNode } from 'react'
 import { supabase } from '@/lib/supabase'
 import type { SessionUser, LoginRow } from '@/types'
 
@@ -48,10 +48,6 @@ function clearStoredUser() {
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState<SessionUser | null>(getStoredUser)
   const [loading, setLoading] = useState(false)
-
-  useEffect(() => {
-    setUser(getStoredUser())
-  }, [])
 
   const login = useCallback(async (username: string, password: string, remember: boolean) => {
     setLoading(true)

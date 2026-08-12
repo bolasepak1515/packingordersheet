@@ -1,9 +1,10 @@
-import { useState, useEffect, useMemo, useCallback, useDeferredValue } from 'react'
-import { RefreshCw, Search } from 'lucide-react'
+import { useState, useEffect, useMemo, useCallback, useDeferredValue, useRef } from 'react'
+import { RefreshCw } from 'lucide-react'
 import { supabase } from '@/lib/supabase'
 import { queryClient } from '@/lib/queryClient'
 import { queryKeys } from '@/hooks/queryKeys'
 import { useJobOrders, useSavePackingTrans } from '@/hooks/useJobOrders'
+import { fetchPackingMaterials } from '@/lib/api'
 import { usePlantCodes, useSizes, usePackingTrans } from '@/hooks/useMasterData'
 import { validateJobOrderLine, calculateLinePreviewData, isPackingSheetReady } from '@/utils/batchValidation'
 import type { BatchLineStatus, LinePreviewData } from '@/utils/batchValidation'
@@ -25,14 +26,28 @@ export type { JobOrder }
 
 export default function JobOrderPage() {
   const { user } = useAuth()
-  const [serverSearch, setServerSearch] = useState('')
-  const { data, isLoading, isFetching, error: queryErr, refetch } = useJobOrders(serverSearch)
+  const { data, isLoading, isFetching, isSyncing, syncedCount, error: queryErr, refetch } = useJobOrders()
   const { data: plantLookup = [] } = usePlantCodes()
   const { data: sizeLookup = [] } = useSizes()
   const { data: packingTrans = [] } = usePackingTrans()
   const savePackingTrans = useSavePackingTrans()
   const batchSavePackingTrans = useSavePackingTrans({ invalidateOnSuccess: false })
+  // Sync-button feedback only. Background revalidations (F5 mount refetch, the
+  // 30-minute auto-sync, route prefetch) never spin this button — their
+  // progress is shown by the "Syncing data" pill so the page doesn't sit in a
+  // perpetual loading state.
+  const [manualRefreshing, setManualRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // "Updated HH:MM:SS" — proves a refresh actually ran and finished. If this
+  // timestamp advances but the data still looks old, the stale copy is coming
+  // from Epicor's BAQ results cache, not from this app.
+  const [lastUpdated, setLastUpdated] = useState<Date | null>(null)
+  const prevFetchingRef = useRef(false)
+  useEffect(() => {
+    if (prevFetchingRef.current && !isFetching && data) setLastUpdated(new Date())
+    prevFetchingRef.current = isFetching
+  }, [isFetching, data])
   const [search, setSearch] = useState('')
   const [showFilters, setShowFilters] = useState(false)
   const [columnFilters, setColumnFilters] = useState<Record<string, string>>({})
@@ -58,15 +73,9 @@ export default function JobOrderPage() {
   const [batchRunning, setBatchRunning] = useState(false)
 
   // Keep typing smooth: filtering lags slightly behind keystrokes while the
-  // deferred value (and thus the filtered dataset) catches up.
+  // deferred value (and thus the filtered dataset) catches up. Search is
+  // client-side on the loaded dataset, so results appear instantly.
   const deferredSearch = useDeferredValue(search)
-
-  // Debounce the search term so the server-side OData $filter query only fires
-  // after the user pauses typing (avoids hammering Epicor per keystroke).
-  useEffect(() => {
-    const t = setTimeout(() => setServerSearch(search.trim()), 400)
-    return () => clearTimeout(t)
-  }, [search])
 
   useEffect(() => {
     if (queryErr) setError(queryErr instanceof Error ? queryErr.message : 'Unknown error')
@@ -108,9 +117,15 @@ export default function JobOrderPage() {
     return { cartonLots: cl, palletData: pd, cartonNums: cn }
   }, [packingTrans])
 
+  // Sync Data ALWAYS issues a fresh request to the Epicor BAQ (via the Vercel
+  // proxy in production, which answers with Cache-Control: no-store). It is
+  // never a re-filter or a cache reload — the SAME plain request used on mount,
+  // with no cache-busting. Existing rows stay visible while the new dataset
+  // loads, so the page never blanks during a sync.
   function fetchData() {
     setError(null)
-    refetch()
+    setManualRefreshing(true)
+    void refetch().finally(() => setManualRefreshing(false))
   }
 
   const filterAccessors: Record<string, (d: JobOrder) => string> = useMemo(() => ({
@@ -419,17 +434,28 @@ export default function JobOrderPage() {
 
     setBatchRunning(true)
     try {
+      // ONE batch read for all unique plants — eliminates N sequential SELECT queries
+      const uniquePlants = [...new Set(targets.map((l) => l.JobHead_Plant).filter(Boolean))]
+      const { data: pcBatch, error: pcBatchErr } = await supabase
+        .from('plantcode')
+        .select('plant_name, running_pallet')
+        .in('plant_name', uniquePlants)
+      if (pcBatchErr) throw new Error('plantcode batch lookup failed: ' + pcBatchErr.message)
+
+      // Local map keeps the running counter current across same-plant lines;
+      // updated after each write so sequential lines see the right value.
+      const runningByPlant: Record<string, number> = {}
+      for (const row of pcBatch ?? []) {
+        if (row.plant_name) runningByPlant[row.plant_name] = parseInt(row.running_pallet ?? '') || 0
+      }
+
       for (const line of targets) {
         const key = `${line.JobHead_JobNum}|${line.OrderDtl_PartNum}`
         setBatchStatus((p) => ({ ...p, [key]: 'creating' }))
         setBatchReasons((p) => ({ ...p, [key]: '' }))
         try {
-          const { data: pcData, error: pcErr } = await supabase
-            .from('plantcode').select('running_pallet').eq('plant_name', line.JobHead_Plant).single()
-          if (pcErr) throw new Error('plantcode lookup failed: ' + pcErr.message)
-
           const preview = calculateLinePreviewData(line, {
-            runningPallet: parseInt(pcData?.running_pallet) || 0,
+            runningPallet: runningByPlant[line.JobHead_Plant] ?? 0,
             plantMap,
             sizeMap,
             allRows: batchState.lines,
@@ -451,6 +477,8 @@ export default function JobOrderPage() {
             const { error: updErr } = await supabase
               .from('plantcode').update({ running_pallet: String(preview.endPallet) }).eq('plant_name', line.JobHead_Plant)
             if (updErr) throw new Error('plantcode update failed: ' + updErr.message)
+            // Advance local counter so the next line for this plant uses the correct base
+            runningByPlant[line.JobHead_Plant] = preview.endPallet
           }
 
           setBatchDetails((p) => ({ ...p, [key]: preview }))
@@ -476,16 +504,40 @@ export default function JobOrderPage() {
     setBatchDetails({})
   }
 
-  const handleGeneratePdf = useCallback((row: JobOrder) => {
+  // Packaging Material is fetched ON-DEMAND, only when generating the PDF. The
+  // MTL API (VITE_API_URL2) is never hit during page load, refresh, search,
+  // sorting or pagination. If the lookup fails we alert but still print the PDF
+  // (the {packagingMaterial} token renders "-") — the page/table is unaffected.
+  const handleGeneratePdf = useCallback(async (row: JobOrder) => {
     if (user && user.role !== 'admin' && user.site !== row.JobHead_Plant) {
       alert('Access Denied: You are only allowed to manage records for your assigned site.')
       return
     }
     const k = `${row.JobHead_JobNum}|${row.OrderDtl_PartNum}`
     setGenerating((prev) => ({ ...prev, [k]: true }))
-    import('@/utils/generateMiniLotPdf')
-      .then((m) => m.generateMiniLotPdf(row, data ?? [], { site: user?.site ?? '', companyName: user?.companyname ?? '' }))
-      .finally(() => setGenerating((prev) => ({ ...prev, [k]: false })))
+    try {
+      const materials: Record<string, string> = {}
+      try {
+        const rows = await fetchPackingMaterials([row.JobHead_Plant])
+        for (const r of rows) {
+          if (r.JobHead_Plant && r.Calculated_List_Material) {
+            materials[r.JobHead_Plant] = r.Calculated_List_Material
+          }
+        }
+      } catch (err) {
+        console.error('Packaging material lookup failed:', err)
+        alert('PDF generation error: could not retrieve Packaging Material. ' +
+          (err instanceof Error ? err.message : String(err)))
+      }
+      const { generateMiniLotPdf } = await import('@/utils/generateMiniLotPdf')
+      generateMiniLotPdf(row, data ?? [], {
+        site: user?.site ?? '',
+        companyName: user?.companyname ?? '',
+        packagingMaterials: materials,
+      })
+    } finally {
+      setGenerating((prev) => ({ ...prev, [k]: false }))
+    }
   }, [data, user])
 
   return (
@@ -503,24 +555,19 @@ export default function JobOrderPage() {
           </p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
-          {serverSearch && (
-            <span style={{
-              display: 'inline-flex', alignItems: 'center', gap: 6,
-              fontSize: 12, fontWeight: 600, padding: '6px 12px', borderRadius: 100,
-              background: '#eff6ff', color: '#1d4ed8', border: '1px solid #bfdbfe', whiteSpace: 'nowrap',
-            }}>
-              {isFetching ? <RefreshCw size={12} className="spin" /> : <Search size={12} />}
-              {isFetching ? `Searching server for "${serverSearch}"…` : `Server search: "${serverSearch}"`}
+          {lastUpdated && (
+            <span style={{ fontSize: 12, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+              Updated {lastUpdated.toLocaleTimeString()}
             </span>
           )}
           <Button
             variant="primary"
             size="md"
             icon={RefreshCw}
-            loading={isFetching}
+            loading={isLoading || manualRefreshing}
             onClick={fetchData}
           >
-            {isFetching ? 'Loading...' : 'Refresh'}
+            {isLoading || manualRefreshing ? 'Syncing...' : 'Sync Data'}
           </Button>
         </div>
       </div>
@@ -533,6 +580,8 @@ export default function JobOrderPage() {
         columnFilters={parentColumnFilters}
         showFilters={parentShowFilters}
         loading={isLoading}
+        isSyncing={isSyncing}
+        syncedCount={syncedCount}
         onSearch={setSearch}
         onFilterChange={handleParentFilterChange}
         onToggleFilters={handleParentToggleFilters}

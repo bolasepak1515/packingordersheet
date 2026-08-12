@@ -13,6 +13,12 @@ const styles = {
     text: 'var(--error-text)',
     icon: '\u2717',
   },
+  warning: {
+    bg: 'var(--warning-bg)',
+    border: 'var(--warning-border)',
+    text: 'var(--warning-text)',
+    icon: '\u26A0',
+  },
 }
 
 export default function Message({ msg }: { msg: FlashMessage | null }) {

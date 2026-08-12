@@ -1,4 +1,4 @@
-import { memo, useState, useEffect } from 'react'
+import { memo, useMemo, useState, useEffect } from 'react'
 import { ArrowUp, ArrowDown, ChevronLeft, ChevronRight, SearchX, X } from 'lucide-react'
 
 export interface Column<T> {
@@ -72,7 +72,6 @@ function DataTable<T>({
   const [size, setSize] = useState(ps || 25)
   const [sortCol, setSortCol] = useState<string | null>(defaultSortCol ?? null)
   const [sortDir, setSortDir] = useState<'asc' | 'desc'>(defaultSortDir)
-  const [hoverKey, setHoverKey] = useState<React.Key | null>(null)
   const [filterFocus, setFilterFocus] = useState<string | null>(null)
   const [visible, setVisible] = useState(() => (reveal ? Math.min(revealStep, data.length) : data.length))
   const isDense = denseProp ?? false
@@ -98,16 +97,20 @@ function DataTable<T>({
     return () => clearTimeout(t)
   }, [reveal, visible, data.length, revealStep, revealInterval])
 
-  const sorted = sortCol
-    ? [...data].sort((a, b) => {
-        const col = columns.find((c) => c.key === sortCol)
-        const av = String(col?.sortValue ? col.sortValue(a) : col?.render(a) ?? '')
-        const bv = String(col?.sortValue ? col.sortValue(b) : col?.render(b) ?? '')
-        return sortDir === 'asc'
-          ? av.localeCompare(bv, undefined, { numeric: true })
-          : bv.localeCompare(av, undefined, { numeric: true })
-      })
-    : data
+  const sorted = useMemo(
+    () =>
+      sortCol
+        ? [...data].sort((a, b) => {
+            const col = columns.find((c) => c.key === sortCol)
+            const av = String(col?.sortValue ? col.sortValue(a) : col?.render(a) ?? '')
+            const bv = String(col?.sortValue ? col.sortValue(b) : col?.render(b) ?? '')
+            return sortDir === 'asc'
+              ? av.localeCompare(bv, undefined, { numeric: true })
+              : bv.localeCompare(av, undefined, { numeric: true })
+          })
+        : data,
+    [data, sortCol, sortDir, columns],
+  )
 
   const totalPages = Math.ceil(sorted.length / pageSize) || 1
   const paged = reveal
@@ -303,24 +306,23 @@ function DataTable<T>({
               paged.map((row, i) => {
                 const key = getKey(row, i)
                 const extra = rowStyle?.(row, i)
-                const isHover = hoverKey === key
-                const stickyBg = extra?.background != null ? String(extra.background) : isHover ? 'var(--bg-hover)' : 'var(--bg-card)'
+                const { background: _bgProp, ...restExtra } = extra ?? {}
+                const rowBg = _bgProp != null ? String(_bgProp) : 'var(--bg-card)'
                 return (
                   <tr
                     key={key}
+                    className="dt-row"
                     onClick={() => onRowClick?.(row)}
-                    onMouseEnter={() => setHoverKey(key)}
-                    onMouseLeave={() => setHoverKey((k) => (k === key ? null : k))}
                     style={{
-                      ...extra,
-                      background: extra?.background != null ? String(extra.background) : (isHover ? 'var(--bg-hover)' : 'var(--bg-card)'),
+                      ...restExtra,
+                      '--row-bg': rowBg,
                       cursor: onRowClick ? 'pointer' : undefined,
-                      transition: 'background 0.12s ease',
                     } as React.CSSProperties}
                   >
                     {columns.map((col) => (
                       <td
                         key={col.key}
+                        className={col.stickyRight ? 'dt-sticky' : undefined}
                         style={{
                           padding: pad,
                           borderBottom: '1px solid var(--border)',
@@ -329,7 +331,6 @@ function DataTable<T>({
                           lineHeight: 1.5,
                           color: 'var(--text-primary)',
                           verticalAlign: 'middle',
-                          background: col.stickyRight ? stickyBg : 'inherit',
                           ...(col.stickyRight
                             ? { position: 'sticky' as const, right: 0, zIndex: 3, boxShadow: '-10px 0 14px -10px rgba(0,0,0,0.12)' }
                             : {}),
@@ -464,6 +465,22 @@ function DataTable<T>({
           </div>
         </div>
       )}
+      <style>{`
+        .dt-row {
+          background: var(--row-bg, var(--bg-card));
+          transition: background 0.12s ease;
+        }
+        .dt-row:hover {
+          background: color-mix(in srgb, var(--row-bg, var(--bg-card)) 90%, #000);
+        }
+        .dt-sticky {
+          background: var(--row-bg, var(--bg-card));
+          transition: background 0.12s ease;
+        }
+        .dt-row:hover .dt-sticky {
+          background: color-mix(in srgb, var(--row-bg, var(--bg-card)) 90%, #000);
+        }
+      `}</style>
     </div>
   )
 }

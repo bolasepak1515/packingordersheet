@@ -8,7 +8,7 @@ import { getDefaultTemplate } from '@/components/tagbuilder/defaultTemplate'
 import { renderTagTemplateHtml, resolveTagElements } from '@/utils/renderTagTemplateHtml'
 import { getWeekNumber } from '@/utils/weekNumber'
 import { formatDate, extractSizeFromPartNum, extractBasePartGroup, padNum, parseLineDesc } from '@/utils/format'
-import type { JobOrder, PackingOrderTrans } from '@/types'
+import type { JobOrder, PackingOrderTrans, Size } from '@/types'
 import type { TagElement } from '@/components/tagbuilder/types'
 
 const QTY_STD = 25
@@ -46,6 +46,8 @@ ${pages.join('\n')}
 export interface MiniLotPdfOptions {
   site?: string
   companyName?: string
+  /** Plant -> calculated packing material list (from the MTL lookup). */
+  packagingMaterials?: Record<string, string>
 }
 
 export async function generateMiniLotPdf(row: JobOrder, allData: JobOrder[], options?: MiniLotPdfOptions) {
@@ -83,7 +85,7 @@ export async function generateMiniLotPdf(row: JobOrder, allData: JobOrder[], opt
       .map((el) => el.id),
   )
 
-  let sizeRows = queryClient.getQueryData<Awaited<ReturnType<typeof fetchSizeLookup>>>(queryKeys.sizes.lookup)
+  let sizeRows = queryClient.getQueryData<Pick<Size, 'size_name' | 'size_code'>[]>(queryKeys.sizes.all)
   if (!sizeRows) sizeRows = await fetchSizeLookup()
   const sizeMap = new Map((sizeRows ?? []).map((s) => [s.size_name, String(s.size_code)]))
 
@@ -189,6 +191,7 @@ export async function generateMiniLotPdf(row: JobOrder, allData: JobOrder[], opt
   for (const pd of pageData) {
     const tokens: Record<string, string> = {
       plant: plantValue,
+      packagingMaterial: options?.packagingMaterials?.[plantValue] ?? '-',
       date: dateStr,
       p: String(pd.p),
       total: String(totalPages),

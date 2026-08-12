@@ -1,5 +1,6 @@
-import { Suspense, lazy } from 'react'
+import { Suspense, lazy, type ReactNode } from 'react'
 import { BrowserRouter, Routes, Route, Navigate, Outlet } from 'react-router-dom'
+import { useIsRestoring } from '@tanstack/react-query'
 import { AuthProvider, useAuth } from '@/contexts/AuthContext'
 import ProtectedRoute from './components/ProtectedRoute'
 import Layout from './components/Layout'
@@ -83,8 +84,22 @@ export default function App() {
   return (
     <BrowserRouter>
       <AuthProvider>
-        <AppRoutes />
+        <QueryHydrator>
+          <AppRoutes />
+        </QueryHydrator>
       </AuthProvider>
     </BrowserRouter>
   )
+}
+
+// Waits for the persisted (IndexedDB) query cache to be restored before mounting
+// any data-dependent page. Without this gate, the first refetchOnMount:'always'
+// query fires BEFORE hydration and its fresh BAQ result can be overwritten by
+// the stale persisted rows — leaving the table showing old data with nothing to
+// re-fetch it. Gating ensures restore() completes first, so the 'always'
+// refetch runs afterwards and the fresh Epicor result always replaces it.
+function QueryHydrator({ children }: { children: ReactNode }) {
+  const isRestoring = useIsRestoring()
+  if (isRestoring) return <PageLoader />
+  return children
 }

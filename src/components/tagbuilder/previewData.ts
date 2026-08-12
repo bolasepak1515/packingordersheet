@@ -19,6 +19,7 @@ function isSizeMatrix(columns: PackingSheetColumn[]): boolean {
 ├──────────────────────────────┼──────────────────────────────────────────────┼──────────────────────────┤
 │ {size}                       │ 2nd-to-last segment of PartNum (e.g. "M")    │ Epicor OrderDtl_PartNum  │
 │ {plant}                      │ Plant code from job                          │ Epicor JobHead_Plant     │
+│ {packagingMaterial}          │ Packing material list for the plant          │ Epicor Naz_PackingOrderSheetMTL.Calculated_List_Material │
 │ {date}                       │ Today's date (DD/MM/YYYY)                    │ new Date()               │
 │ {p}                          │ Current page number (1-based)                │ Computed                 │
 │ {total}                      │ Total pages for this row                     │ Computed                 │
@@ -48,6 +49,7 @@ function isSizeMatrix(columns: PackingSheetColumn[]): boolean {
 
 export const SAMPLE = {
   plant: '43816C',
+  packagingMaterial: 'CORRUGATED BOX 32MM, STRETCH FILM 200MM',
   date: '29/07/2026',
   p: '2',
   total: '3',

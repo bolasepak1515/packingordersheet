@@ -60,6 +60,12 @@ export interface JobOrder {
   Calculated_PlantPacking: string | null
 }
 
+// ── Epicor OData (Naz_PackingOrderSheetMTL) ──
+export interface PackingMaterial {
+  JobHead_Plant: string
+  Calculated_List_Material: string | null
+}
+
 // ── Auth ──
 export interface LoginRow {
   id: number
@@ -100,5 +106,5 @@ export interface ParsedLineDesc {
 
 export interface FlashMessage {
   text: string
-  type: 'success' | 'error'
+  type: 'success' | 'error' | 'warning'
 }

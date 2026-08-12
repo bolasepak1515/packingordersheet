@@ -127,14 +127,6 @@ export async function deleteLoginUser(id: number) {
 }
 
 // ── Lookups ──
-export async function fetchPlantLookup() {
-  const { data, error } = await supabase
-    .from('plantcode')
-    .select('plant_name, plant_code, running_pallet')
-  if (error) throw error
-  return data ?? []
-}
-
 export async function fetchSizeLookup() {
   const { data, error } = await supabase
     .from('sizes')

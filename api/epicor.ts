@@ -68,20 +68,23 @@ export default async function handler(req: Request): Promise<Response> {
   // Compress the (potentially multi-MB) BAQ JSON with gzip when the client
   // advertises support. Browsers always do, so the Job Order summary goes over
   // the wire at a fraction of its size; requests without Accept-Encoding get
-  // the plain body untouched.
+  // the plain body untouched. If CompressionStream is unavailable the request
+  // degrades gracefully to the uncompressed body instead of failing with a 500.
   const supportsGzip = /\bgzip\b/.test(req.headers.get('accept-encoding') ?? '')
   const headers: Record<string, string> = {
     'Content-Type': 'application/json',
     'Cache-Control': 'no-store',
     ...CORS,
   }
-  let body: BodyInit | null
+  let body: BodyInit | null = upstreamRes.body
   if (supportsGzip && upstreamRes.body) {
-    headers['Content-Encoding'] = 'gzip'
-    headers['Vary'] = 'Accept-Encoding'
-    body = upstreamRes.body.pipeThrough(new CompressionStream('gzip'))
-  } else {
-    body = upstreamRes.body
+    try {
+      body = upstreamRes.body.pipeThrough(new CompressionStream('gzip'))
+      headers['Content-Encoding'] = 'gzip'
+      headers['Vary'] = 'Accept-Encoding'
+    } catch {
+      // CompressionStream unavailable — serve the plain body.
+    }
   }
 
   return new Response(body, {

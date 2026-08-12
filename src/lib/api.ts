@@ -38,34 +38,6 @@ async function odataGet(url: string): Promise<unknown[]> {
 const ORDERBY = 'OrderHed_OrderNum desc,OrderDtl_OrderLine asc'
 const SUMMARY_URL = import.meta.env.VITE_API_URL
 
-// Only the columns the app actually reads — drops the BAQ's unused columns so
-// the full Job Order result downloads (and parses) far fewer bytes.
-const JOB_FIELDS = [
-  'OrderHed_Company',
-  'OrderHed_OrderDate',
-  'OrderHed_PONum',
-  'OrderHed_OrderNum',
-  'OrderDtl_OrderLine',
-  'OrderDtl_PartNum',
-  'OrderDtl_LineDesc',
-  'OrderDtl_FS_LotNumber_c',
-  'OrderDtl_FS_AQLNew_c',
-  'OrderDtl_FS_Brand_c',
-  'OrderDtl_IUM',
-  'OrderDtl_OrderQty',
-  'OrderDtl_FS_ContainerSize_c',
-  'OrderDtl_NeedByDate',
-  'OrderDtl_FS_PcsPerBox_c',
-  'OrderDtl_FS_BoxPerCarton_c',
-  'JobHead_Company',
-  'JobHead_Plant',
-  'JobHead_JobNum',
-  'JobHead_ProdQty',
-  'JobHead_IUM',
-  'Calculated_Total_CTN',
-  'Calculated_PlantPacking',
-]
-
 /**
  * Fetches the FULL Job Order Summary BAQ result in ONE request and returns all
  * rows. No paging, no $top/$skip, no streaming phases — the complete result set
@@ -73,9 +45,13 @@ const JOB_FIELDS = [
  * filtered client-side. `search` optionally narrows the request with an OData
  * $filter. Freshness depends on the BAQ's results cache being disabled in
  * Epicor; this app adds no cache-busting on top.
+ *
+ * No $select here: Epicor returns HTTP 500 when this particular BAQ is asked
+ * to $select its (calculated) columns, so the full result set is requested and
+ * transfer size is handled by the gzip proxy instead.
  */
 export async function fetchJobOrders(search?: string): Promise<JobOrder[]> {
-  const params = [`$orderby=${ORDERBY}`, `$select=${JOB_FIELDS.join(',')}`]
+  const params = [`$orderby=${ORDERBY}`]
   if (search && search.trim()) {
     const q = search.trim().replace(/'/g, "''")
     const isNum = /^\d+$/.test(q)

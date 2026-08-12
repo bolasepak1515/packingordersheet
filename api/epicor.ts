@@ -1,4 +1,4 @@
-// Vercel edge proxy for the Epicor Kinetic BAQ OData services.
+// Vercel serverless proxy for the Epicor Kinetic BAQ OData services.
 //
 // React ──► /api/epicor?baq=…&$orderby=…&$filter=… ──► this function ──► Epicor OData ──► BAQ ──► JSON ──► React
 //
@@ -19,8 +19,13 @@
 // Summary and the Packing Material MTL lookup), not arbitrary URLs — no
 // open-proxy / SSRF. Remaining query params ($orderby/$filter/$select) are
 // forwarded as-is.
-
-export const config = { runtime: 'edge' }
+//
+// Runs on the Node.js runtime (NOT Edge): Vercel Edge functions are hard-capped
+// at 25s and ignore maxDuration, but Epicor's Naz_PackingOrderSheetSummary BAQ
+// takes ~32s. The 300s budget is set in vercel.json's `functions` block, which
+// only applies to Node.js serverless functions. Named method exports (GET /
+// OPTIONS) are used because the Node runtime treats a default export as the
+// classic (req, res) signature and would ignore the returned Response.
 
 const CORS = {
   'Access-Control-Allow-Origin': '*',
@@ -28,14 +33,11 @@ const CORS = {
   'Access-Control-Allow-Headers': 'Content-Type, Authorization, X-API-Key',
 }
 
-export default async function handler(req: Request): Promise<Response> {
-  if (req.method === 'OPTIONS') {
-    return new Response(null, { status: 204, headers: CORS })
-  }
-  if (req.method !== 'GET') {
-    return new Response('Method Not Allowed', { status: 405, headers: CORS })
-  }
+export async function OPTIONS(): Promise<Response> {
+  return new Response(null, { status: 204, headers: CORS })
+}
 
+export async function GET(req: Request): Promise<Response> {
   const base = process.env.EPICOR_API_BASE ?? ''
   const auth = process.env.EPICOR_AUTH ?? ''
   const apiKey = process.env.EPICOR_API_KEY ?? ''
@@ -46,7 +48,7 @@ export default async function handler(req: Request): Promise<Response> {
     )
   }
 
-  const url = new URL(req.url)
+  const url = new URL(req.url, 'http://localhost')
   const baq = url.searchParams.get('baq') ?? ''
   if (!/^Naz_[A-Za-z0-9_]+\/Data$/.test(baq)) {
     return new Response('Invalid baq parameter', { status: 400, headers: CORS })
@@ -58,16 +60,13 @@ export default async function handler(req: Request): Promise<Response> {
 
   const upstreamRes = await fetch(upstream.toString(), {
     headers: {
-      Authorization: `Basic ${btoa(auth)}`,
+      Authorization: `Basic ${Buffer.from(auth).toString('base64')}`,
       'X-API-Key': apiKey,
       Accept: 'application/json',
     },
     cache: 'no-store',
   })
 
-  // NOTE: responses are passed through as plain text. Gzip (CompressionStream)
-  // and ReadableStream bodies both caused HTTP 500 from the Vercel Edge runtime
-  // on this feed, so transfer size stays uncompressed and the BAQ just works.
   const body = await upstreamRes.text()
   return new Response(body, {
     status: upstreamRes.status,

@@ -4,10 +4,11 @@
 //
 // Why a proxy:
 //  - Epicor credentials live server-side (EPICOR_AUTH / EPICOR_API_KEY), never in the browser bundle.
-//  - The response is always Cache-Control: no-store, so every page load and every
-//    "Sync Data" gets the LATEST BAQ result. The BAQ's own results cache is
-//    disabled in Epicor (Naz_PackingOrderSheetSummary) — this app does no
-//    client-side cache-busting; the proxy just passes the request through.
+//  - Epicor's Naz_PackingOrderSheetSummary BAQ takes ~32s to compute (its own
+//    results cache is disabled in Epicor), so the CDN caches the JSON for 10
+//    minutes. After the first sync, subsequent Sync Data requests are served
+//    from the CDN in ~1s; only the first sync after a 10-minute gap pays the
+//    full Epicor compute time. The app's IndexedDB cache makes F5 instant too.
 //
 // Required Vercel environment variables:
 //  - EPICOR_API_BASE  e.g. https://supermax-pilot.epicorsaas.com/server/api/v2/odata/SGM/BaqSvc/
@@ -54,25 +55,44 @@ export async function GET(req: Request): Promise<Response> {
     return new Response('Invalid baq parameter', { status: 400, headers: CORS })
   }
 
-  url.searchParams.delete('baq')
+  // Strip only the `baq` param and pass the remaining raw query through
+  // byte-for-byte. Round-tripping through URLSearchParams would re-encode the
+  // `$orderby`/`$filter` operators (%24…) and spaces as `+`, which Epicor's BAQ
+  // endpoint can reject. Keeping the browser's exact encoding (%20, literal $)
+  // is the safest thing to send upstream.
   const upstream = new URL(base + baq)
-  upstream.search = url.searchParams.toString()
+  upstream.search = url.search.replace(/(^|&)baq=[^&]*/, '').replace(/^&+/, '')
 
-  const upstreamRes = await fetch(upstream.toString(), {
-    headers: {
-      Authorization: `Basic ${Buffer.from(auth).toString('base64')}`,
-      'X-API-Key': apiKey,
-      Accept: 'application/json',
-    },
-    cache: 'no-store',
-  })
+  let upstreamRes: Response
+  try {
+    upstreamRes = await fetch(upstream.toString(), {
+      headers: {
+        Authorization: `Basic ${Buffer.from(auth).toString('base64')}`,
+        'X-API-Key': apiKey,
+        Accept: 'application/json',
+      },
+      cache: 'no-store',
+    })
+  } catch (err) {
+    console.error('[epicor] upstream request failed:', err)
+    return new Response(`Epicor unreachable: ${(err as Error).message}`, {
+      status: 502,
+      headers: CORS,
+    })
+  }
 
   const body = await upstreamRes.text()
+  if (!upstreamRes.ok) {
+    console.error(`[epicor] upstream ${upstreamRes.status} for ${baq}: ${body.slice(0, 500)}`)
+  }
+  // CDN-cache the computed BAQ for 10 minutes. Order-sheet data changes rarely,
+  // so Sync Data stays ~1s instead of waiting ~35s for Epicor to recompute.
   return new Response(body, {
     status: upstreamRes.status,
     headers: {
       'Content-Type': 'application/json',
-      'Cache-Control': 'no-store',
+      'Cache-Control': 'public, max-age=0, s-maxage=600, stale-while-revalidate=1800',
+      'CDN-Cache-Control': 'public, s-maxage=600, stale-while-revalidate=1800',
       ...CORS,
     },
   })

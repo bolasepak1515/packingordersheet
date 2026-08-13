@@ -1,5 +1,6 @@
 import { useCallback, useEffect } from 'react'
 import { useMutation, useQuery, useQueryClient } from '@tanstack/react-query'
+import { supabase } from '@/lib/supabase'
 import { fetchPlantCodes, fetchSizes, fetchPackingTrans, fetchLoginUsers, fetchTagTemplate, fetchPackingSheetTemplate, createPlantCode, updatePlantCode, deletePlantCode, createSize, updateSize, deleteSize, createLoginUser, updateLoginUser, deleteLoginUser, saveTagTemplate, savePackingSheetTemplate, type TagTemplateRow } from '@/lib/db'
 import { queryKeys } from './queryKeys'
 import type { PlantCode, Size, LoginRow, PackingOrderTrans } from '@/types'
@@ -23,10 +24,37 @@ export function useSizes() {
 }
 
 export function usePackingTrans() {
-  return useQuery<PackingTransRow[], Error>({
+  const queryClient = useQueryClient()
+  const query = useQuery<PackingTransRow[], Error>({
     queryKey: queryKeys.packingTrans.all,
     queryFn: () => fetchPackingTrans(),
+    // Always pull the latest internal lots from Supabase on mount and on tab
+    // focus: another user may have created/updated lots this tab can't know
+    // about. Cached rows paint instantly (search + table), then the fresh data
+    // swaps in — so a refresh shows the new lots instead of a 5-min-old copy.
+    refetchOnMount: 'always',
+    refetchOnWindowFocus: true,
   })
+
+  // Live updates: any user's create/update/delete on packingordertrans triggers
+  // a background refetch, so the table stays current without a manual refresh.
+  useEffect(() => {
+    const channel = supabase
+      .channel('packingordertrans-realtime')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'packingordertrans' }, () => {
+        void queryClient.invalidateQueries({ queryKey: queryKeys.packingTrans.all })
+      })
+      .subscribe()
+    return () => {
+      void supabase.removeChannel(channel)
+    }
+  }, [queryClient])
+
+  return {
+    data: query.data,
+    isLoading: query.isPending,
+    refetch: () => query.refetch(),
+  }
 }
 
 export function useLoginUsers() {

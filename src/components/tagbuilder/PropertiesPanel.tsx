@@ -1,6 +1,7 @@
 import { X, Copy, ArrowUp, ArrowDown, ChevronUp, ChevronDown, Plus, Trash2 } from 'lucide-react'
 import type { TagElement, PackingSheetColumn } from './types'
 import { TOKENS, SHEET_DATA_COLUMNS } from './types'
+import { toHexColor } from './sanitize'
 
 interface Props {
   element: TagElement | null
@@ -170,7 +171,7 @@ export default function PropertiesPanel({ element, onChange, onDelete, onDuplica
             </div>
             <div style={group}>
               <span style={label}>Color</span>
-              <input type="color" value={element.color ?? '#000000'} onChange={(e) => patch({ color: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} />
+              <input type="color" value={toHexColor(element.color, '#000000')} onChange={(e) => patch({ color: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} />
             </div>
           </>
         )}
@@ -261,7 +262,7 @@ export default function PropertiesPanel({ element, onChange, onDelete, onDuplica
             <div style={group}><span style={label}>Thickness</span><input type="number" value={element.lineThickness ?? 1} onChange={(e) => patch({ lineThickness: +e.target.value })} style={input} min={1} /></div>
             <div style={group}>
               <span style={label}>Color</span>
-              <input type="color" value={element.lineColor ?? '#000000'} onChange={(e) => patch({ lineColor: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} />
+              <input type="color" value={toHexColor(element.lineColor, '#000000')} onChange={(e) => patch({ lineColor: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} />
             </div>
           </>
         )}
@@ -272,7 +273,7 @@ export default function PropertiesPanel({ element, onChange, onDelete, onDuplica
             <span style={label}>Border</span>
             <div style={row}>
               <div><span style={{ ...label, marginBottom: 2 }}>Width</span><input type="number" value={element.borderWidth ?? 0} onChange={(e) => patch({ borderWidth: +e.target.value })} style={input} min={0} /></div>
-              <div><span style={{ ...label, marginBottom: 2 }}>Color</span><input type="color" value={element.borderColor ?? '#000000'} onChange={(e) => patch({ borderColor: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} /></div>
+              <div><span style={{ ...label, marginBottom: 2 }}>Color</span><input type="color" value={toHexColor(element.borderColor, '#000000')} onChange={(e) => patch({ borderColor: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} /></div>
             </div>
           </div>
         )}
@@ -283,7 +284,7 @@ export default function PropertiesPanel({ element, onChange, onDelete, onDuplica
             <span style={label}>Border</span>
             <div style={row}>
               <div><span style={{ ...label, marginBottom: 2 }}>Width</span><input type="number" value={element.borderWidth ?? 1} onChange={(e) => patch({ borderWidth: +e.target.value })} style={input} min={0} /></div>
-              <div><span style={{ ...label, marginBottom: 2 }}>Color</span><input type="color" value={element.borderColor ?? '#999'} onChange={(e) => patch({ borderColor: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} /></div>
+              <div><span style={{ ...label, marginBottom: 2 }}>Color</span><input type="color" value={toHexColor(element.borderColor, '#999999')} onChange={(e) => patch({ borderColor: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} /></div>
             </div>
           </div>
         )}
@@ -292,7 +293,7 @@ export default function PropertiesPanel({ element, onChange, onDelete, onDuplica
         {element.type !== 'line' && (
           <div style={group}>
             <span style={label}>Background</span>
-            <input type="color" value={element.backgroundColor ?? '#ffffff'} onChange={(e) => patch({ backgroundColor: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} />
+            <input type="color" value={toHexColor(element.backgroundColor, '#ffffff')} onChange={(e) => patch({ backgroundColor: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} />
           </div>
         )}
 
@@ -360,7 +361,7 @@ function TableProperties(props: {
           <div><span style={{ ...label, marginBottom: 2 }}>Row Height</span><input type="number" value={rowHeight} onChange={(e) => onChange({ tableRowHeight: +e.target.value })} style={input} min={12} /></div>
           <div>
             <span style={{ ...label, marginBottom: 2 }}>Header BG</span>
-            <input type="color" value={headerBg} onChange={(e) => onChange({ tableHeaderBg: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} />
+            <input type="color" value={toHexColor(headerBg, '#f5f5f5')} onChange={(e) => onChange({ tableHeaderBg: e.target.value })} style={{ width: '100%', height: 32, padding: 2, borderRadius: 'var(--radius-sm)', border: '1px solid var(--border)', cursor: 'pointer' }} />
           </div>
         </div>
       </div>

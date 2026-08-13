@@ -4,7 +4,7 @@ import { supabase } from '@/lib/supabase'
 import { queryClient } from '@/lib/queryClient'
 import { queryKeys } from '@/hooks/queryKeys'
 import { useJobOrders, useSavePackingTrans } from '@/hooks/useJobOrders'
-import { fetchPackingMaterials } from '@/lib/api'
+import { fetchPackingMaterials, fetchJobOrders, fetchJobOrderByNum, isNum } from '@/lib/api'
 import { usePlantCodes, useSizes, usePackingTrans } from '@/hooks/useMasterData'
 import { validateJobOrderLine, calculateLinePreviewData, isPackingSheetReady } from '@/utils/batchValidation'
 import type { BatchLineStatus, LinePreviewData } from '@/utils/batchValidation'
@@ -19,17 +19,17 @@ import type { ParentOrder } from '@/components/JobOrderParentTable'
 import JobOrderDetailModal from '@/components/JobOrderDetailModal'
 import JobOrderEditModal from '@/components/JobOrderEditModal'
 import CartonLotPreviewModal from '@/components/CartonLotPreviewModal'
-import type { JobOrder, PalletInfo } from '@/types'
+import type { JobOrder, PalletInfo, FlashMessage } from '@/types'
 import type { CartonLotPreviewData } from '@/components/CartonLotPreviewModal'
 
 export type { JobOrder }
 
 export default function JobOrderPage() {
   const { user } = useAuth()
-  const { data, isLoading, isFetching, isSyncing, syncedCount, error: queryErr, refetch } = useJobOrders()
+  const { data, isLoading, isFetching, error: queryErr, refetch } = useJobOrders()
   const { data: plantLookup = [] } = usePlantCodes()
   const { data: sizeLookup = [] } = useSizes()
-  const { data: packingTrans = [] } = usePackingTrans()
+  const { data: packingTrans = [], refetch: refetchPackingTrans } = usePackingTrans()
   const savePackingTrans = useSavePackingTrans()
   const batchSavePackingTrans = useSavePackingTrans({ invalidateOnSuccess: false })
   // Sync-button feedback only. Background revalidations (F5 mount refetch, the
@@ -38,6 +38,11 @@ export default function JobOrderPage() {
   // perpetual loading state.
   const [manualRefreshing, setManualRefreshing] = useState(false)
   const [error, setError] = useState<string | null>(null)
+  const [syncMsg, setSyncMsg] = useState<FlashMessage | null>(null)
+  // What the in-flight Sync Data button is doing: 'all' = full BAQ refresh,
+  // 'search' = targeted sync of matching rows, number = targeted Order Num sync.
+  // Used only for the button label.
+  const [syncTarget, setSyncTarget] = useState<'all' | 'search' | number | null>(null)
 
   // "Updated HH:MM:SS" — proves a refresh actually ran and finished. If this
   // timestamp advances but the data still looks old, the stale copy is coming
@@ -118,14 +123,102 @@ export default function JobOrderPage() {
   }, [packingTrans])
 
   // Sync Data ALWAYS issues a fresh request to the Epicor BAQ (via the Vercel
-  // proxy in production, which answers with Cache-Control: no-store). It is
-  // never a re-filter or a cache reload — the SAME plain request used on mount,
-  // with no cache-busting. Existing rows stay visible while the new dataset
-  // loads, so the page never blanks during a sync.
-  function fetchData() {
+  // proxy in production) AND re-pulls the internal lots from Supabase, so a
+  // second user's recent create/update shows up. It is never a re-filter or a
+  // cache reload. Existing rows stay visible while the new datasets load, so
+  // the page never blanks during a sync.
+  //
+  // What gets synced depends on the search bar:
+  //  - EMPTY search          -> full BAQ refresh (everything).
+  //  - bare numeric search   -> TARGETED sync of just that Order Num (the
+  //    $filter is pushed down to SQL in Epicor — seconds, not the 30-48s
+  //    full-BAQ compute). The order's stale rows are replaced by the fresh
+  //    result, and if Epicor no longer returns it, the order is removed.
+  //  - any other search text -> TARGETED sync of just the matching rows (the
+  //    same server-side $filter used for search), merged into the cache.
+  async function syncFull() {
     setError(null)
+    setSyncTarget('all')
     setManualRefreshing(true)
-    void refetch().finally(() => setManualRefreshing(false))
+    try {
+      await Promise.allSettled([refetch(), refetchPackingTrans()])
+      setSyncMsg({ text: 'Synced all job orders', type: 'success' })
+    } finally {
+      setManualRefreshing(false)
+    }
+  }
+
+  // Uniquely identifies a BAQ result row. The Summary BAQ type doesn't expose a
+  // release field, so Order Num + Order Line is the row identity available here.
+  const rowKey = (d: JobOrder) => `${d.OrderHed_OrderNum}|${d.OrderDtl_OrderLine}`
+
+  async function syncOrder(orderNum: number) {
+    setError(null)
+    setSyncTarget(orderNum)
+    setManualRefreshing(true)
+    try {
+      let rows: JobOrder[]
+      try {
+        rows = await fetchJobOrderByNum(orderNum)
+      } catch (err: unknown) {
+        setError('Sync failed: ' + (err instanceof Error ? err.message : String(err)))
+        return
+      }
+      // Merge into the existing cache instead of replacing the whole dataset:
+      // drop the target order's stale rows (the fresh result replaces them),
+      // append the fresh result (updates lines in place / adds a genuinely-new
+      // order), and keep every other order's rows untouched. If Epicor returns
+      // zero rows, the drop above removes the order from the cache entirely.
+      const prev = queryClient.getQueryData<JobOrder[]>(queryKeys.jobOrders.all) ?? []
+      const merged = [
+        ...prev.filter((d) => d.OrderHed_OrderNum !== orderNum),
+        ...rows,
+      ].sort((a, b) => b.OrderHed_OrderNum - a.OrderHed_OrderNum || a.OrderDtl_OrderLine - b.OrderDtl_OrderLine)
+      queryClient.setQueryData(queryKeys.jobOrders.all, merged)
+      setSyncMsg(rows.length === 0
+        ? { text: `Order #${orderNum} removed — no longer in BAQ`, type: 'warning' }
+        : { text: `Synced Order #${orderNum}`, type: 'success' })
+      await refetchPackingTrans()
+    } finally {
+      setManualRefreshing(false)
+    }
+  }
+
+  async function syncSearch(term: string) {
+    setError(null)
+    setSyncTarget('search')
+    setManualRefreshing(true)
+    try {
+      let rows: JobOrder[]
+      try {
+        rows = await fetchJobOrders(term)
+      } catch (err: unknown) {
+        setError('Sync failed: ' + (err instanceof Error ? err.message : String(err)))
+        return
+      }
+      // Merge only the matching rows into the cache: rows Epicor re-supplies are
+      // updated in place, genuinely-new rows append, everything else is kept.
+      const prev = queryClient.getQueryData<JobOrder[]>(queryKeys.jobOrders.all) ?? []
+      const incoming = new Map(rows.map((r) => [rowKey(r), r]))
+      const merged = [
+        ...prev.filter((d) => !incoming.has(rowKey(d))),
+        ...rows,
+      ].sort((a, b) => b.OrderHed_OrderNum - a.OrderHed_OrderNum || a.OrderDtl_OrderLine - b.OrderDtl_OrderLine)
+      queryClient.setQueryData(queryKeys.jobOrders.all, merged)
+      setSyncMsg(rows.length === 0
+        ? { text: `No rows match "${term}" in BAQ`, type: 'warning' }
+        : { text: `Synced ${rows.length} matching row${rows.length === 1 ? '' : 's'}`, type: 'success' })
+      await refetchPackingTrans()
+    } finally {
+      setManualRefreshing(false)
+    }
+  }
+
+  function fetchData() {
+    const q = search.trim()
+    if (!q) void syncFull()
+    else if (isNum(q)) void syncOrder(Number(q))
+    else void syncSearch(q)
   }
 
   const filterAccessors: Record<string, (d: JobOrder) => string> = useMemo(() => ({
@@ -567,21 +660,26 @@ export default function JobOrderPage() {
             loading={isLoading || manualRefreshing}
             onClick={fetchData}
           >
-            {isLoading || manualRefreshing ? 'Syncing...' : 'Sync Data'}
+            {isLoading || manualRefreshing
+              ? syncTarget === 'all' || syncTarget == null
+                ? 'Syncing...'
+                : syncTarget === 'search'
+                  ? 'Syncing search...'
+                  : `Syncing Order #${syncTarget}...`
+              : 'Sync Data'}
           </Button>
         </div>
       </div>
 
       {successMsg && <Message msg={{ text: successMsg, type: 'success' }} />}
       {error && <Message msg={{ text: error, type: 'error' }} />}
+      {syncMsg && <Message msg={syncMsg} />}
 
       <JobOrderParentTable
         rows={parentRows}
         columnFilters={parentColumnFilters}
         showFilters={parentShowFilters}
         loading={isLoading}
-        isSyncing={isSyncing}
-        syncedCount={syncedCount}
         onSearch={setSearch}
         onFilterChange={handleParentFilterChange}
         onToggleFilters={handleParentToggleFilters}

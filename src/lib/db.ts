@@ -1,6 +1,7 @@
 import { supabase } from './supabase'
 import type { Size, PlantCode, PackingOrderTrans, LoginRow } from '@/types'
 import type { TagElement } from '@/components/tagbuilder/types'
+import { sanitizeTemplateElements } from '@/components/tagbuilder/sanitize'
 
 export interface TagTemplateRow {
   id: number
@@ -143,7 +144,9 @@ export async function fetchTagTemplate(): Promise<TagTemplateRow | null> {
     .eq('id', 1)
     .maybeSingle()
   if (error) throw error
-  return (data as TagTemplateRow | null) ?? null
+  const row = (data as TagTemplateRow | null) ?? null
+  if (!row) return null
+  return { ...row, elements: sanitizeTemplateElements(row.elements) }
 }
 
 export async function saveTagTemplate(
@@ -152,12 +155,14 @@ export async function saveTagTemplate(
   canvasHeight: number,
   updatedBy?: string,
 ): Promise<TagTemplateRow> {
+  const cw = Math.round(canvasWidth)
+  const ch = Math.round(canvasHeight)
   const row: TagTemplateRow = {
     id: 1,
     name: 'default',
     elements,
-    canvas_width: canvasWidth,
-    canvas_height: canvasHeight,
+    canvas_width: cw,
+    canvas_height: ch,
     updated_by: updatedBy ?? null,
     updated_at: new Date().toISOString(),
   }
@@ -167,8 +172,8 @@ export async function saveTagTemplate(
       id: 1,
       name: 'default',
       elements: elements as unknown as Record<string, unknown>,
-      canvas_width: canvasWidth,
-      canvas_height: canvasHeight,
+      canvas_width: cw,
+      canvas_height: ch,
       updated_by: row.updated_by,
       updated_at: row.updated_at,
     })
@@ -184,7 +189,9 @@ export async function fetchPackingSheetTemplate(): Promise<TagTemplateRow | null
     .eq('id', 1)
     .maybeSingle()
   if (error) throw error
-  return (data as TagTemplateRow | null) ?? null
+  const row = (data as TagTemplateRow | null) ?? null
+  if (!row) return null
+  return { ...row, elements: sanitizeTemplateElements(row.elements) }
 }
 
 export async function savePackingSheetTemplate(
@@ -193,12 +200,14 @@ export async function savePackingSheetTemplate(
   canvasHeight: number,
   updatedBy?: string,
 ): Promise<TagTemplateRow> {
+  const cw = Math.round(canvasWidth)
+  const ch = Math.round(canvasHeight)
   const row: TagTemplateRow = {
     id: 1,
     name: 'default',
     elements,
-    canvas_width: canvasWidth,
-    canvas_height: canvasHeight,
+    canvas_width: cw,
+    canvas_height: ch,
     updated_by: updatedBy ?? null,
     updated_at: new Date().toISOString(),
   }
@@ -208,8 +217,8 @@ export async function savePackingSheetTemplate(
       id: 1,
       name: 'default',
       elements: elements as unknown as Record<string, unknown>,
-      canvas_width: canvasWidth,
-      canvas_height: canvasHeight,
+      canvas_width: cw,
+      canvas_height: ch,
       updated_by: row.updated_by,
       updated_at: row.updated_at,
     })

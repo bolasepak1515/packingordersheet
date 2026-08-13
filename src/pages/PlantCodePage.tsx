@@ -9,6 +9,7 @@ import StatusBadge from '@/components/StatusBadge'
 import ConfirmDialog from '@/components/ConfirmDialog'
 import Portal from '@/components/Portal'
 import type { Column } from '@/components/DataTable'
+import { formatRelativeTime } from '@/utils/format'
 import type { PlantCode, FlashMessage } from '@/types'
 
 const inputStyle: React.CSSProperties = {
@@ -118,17 +119,36 @@ export default function PlantCodePage() {
     { key: 'Code', label: 'Code', sortable: true, render: (item) => <span style={{ fontWeight: 500 }}>{item.plant_code}</span> },
     { key: 'Name', label: 'Name', render: (item) => <span style={{ color: 'var(--text-secondary)' }}>{item.plant_name ?? '-'}</span> },
     { key: 'Company', label: 'Company', sortable: true, render: (item) => <span style={{ color: 'var(--text-secondary)' }}>{item.company ?? '-'}</span> },
-    { key: 'RunningPallet', label: 'Running Pallet', render: (item) => <span style={{ fontFamily: 'var(--font-mono)', fontSize: 12 }}>{item.running_pallet ?? '-'}</span> },
+    { key: 'RunningPallet', label: 'Running Pallet', render: (item) => <span style={{ color: 'var(--text-secondary)' }}>{item.running_pallet ?? '-'}</span> },
     { key: 'LastUpdate', label: 'Last Update', sortable: true, render: (item) => {
       const val = item.updated_at
-      if (!val) return <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>-</span>
+      if (!val) return <span style={{ color: 'var(--text-secondary)' }}>-</span>
       const d = new Date(val)
-      if (isNaN(d.getTime())) return <span style={{ color: 'var(--text-secondary)', fontSize: 12 }}>{val}</span>
+      if (isNaN(d.getTime())) return <span style={{ color: 'var(--text-secondary)' }}>{val}</span>
       const dd = String(d.getDate()).padStart(2, '0')
       const mm = String(d.getMonth() + 1).padStart(2, '0')
       const hh = String(d.getHours()).padStart(2, '0')
       const mi = String(d.getMinutes()).padStart(2, '0')
-      return <span style={{ color: 'var(--text-secondary)', fontSize: 12, fontFamily: 'var(--font-mono)' }}>{dd}/{mm}/{d.getFullYear()} {hh}:{mi}</span>
+      return (
+        <div style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
+          <span style={{ color: 'var(--text-secondary)' }}>{dd}/{mm}/{d.getFullYear()} {hh}:{mi}</span>
+          <span
+            style={{
+              display: 'inline-flex',
+              alignItems: 'center',
+              padding: '2px 10px',
+              borderRadius: 100,
+              fontSize: 12,
+              fontWeight: 500,
+              background: 'var(--bg-hover)',
+              color: 'var(--text-secondary)',
+              whiteSpace: 'nowrap',
+            }}
+          >
+            {formatRelativeTime(val)}
+          </span>
+        </div>
+      )
     } },
     { key: 'Status', label: 'Status', render: (item) => <StatusBadge active={item.is_active} /> },
     {

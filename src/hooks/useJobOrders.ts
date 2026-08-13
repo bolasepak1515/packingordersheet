@@ -46,10 +46,6 @@ export function useJobOrders() {
     // True only while the FIRST result is still loading (blank table state).
     isLoading: query.isPending && query.isFetching,
     isFetching: query.isFetching,
-    // "Syncing data (N loaded)..." — rows already on screen while a refresh is
-    // in flight (mount revalidation, 30-min auto-sync, or Sync Data).
-    isSyncing: query.isFetching && !!query.data,
-    syncedCount: query.data?.length ?? 0,
     error: query.error,
     // Sync Data re-calls the exact same fetch used on mount — no "force" mode.
     refetch,

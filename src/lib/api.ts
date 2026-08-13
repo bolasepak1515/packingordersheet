@@ -6,10 +6,11 @@ const HEADERS = {
   'X-API-Key': import.meta.env.VITE_API_KEY,
 }
 
-// Production goes through the Vercel edge proxy (api/epicor.ts) which keeps the
-// Epicor credentials server-side and answers with Cache-Control: no-store, so
-// Sync Data always fetches the latest BAQ result. Local dev calls Epicor
-// directly over CORS so no extra setup is needed there.
+// Production goes through the Vercel serverless proxy (api/epicor.ts) which
+// keeps the Epicor credentials server-side. The proxy's response is CDN-cached
+// for 10 minutes, so Sync Data after the first load returns in ~1s instead of
+// waiting ~35s for Epicor's BAQ. Local dev calls Epicor directly over CORS so
+// no extra setup is needed there.
 const USE_PROXY = import.meta.env.PROD
 
 /** Extract the "Naz_<BaqName>/Data" path segment from a full Epicor feed URL. */
@@ -38,6 +39,11 @@ async function odataGet(url: string): Promise<unknown[]> {
 const ORDERBY = 'OrderHed_OrderNum desc,OrderDtl_OrderLine asc'
 const SUMMARY_URL = import.meta.env.VITE_API_URL
 
+/** True when `value` is a bare integer — the app's shared "is this an Order Num?" check. */
+export function isNum(value: string): boolean {
+  return /^\d+$/.test(value.trim())
+}
+
 /**
  * Fetches the FULL Job Order Summary BAQ result in ONE request and returns all
  * rows. No paging, no $top/$skip, no streaming phases — the complete result set
@@ -54,7 +60,6 @@ export async function fetchJobOrders(search?: string): Promise<JobOrder[]> {
   const params = [`$orderby=${ORDERBY}`]
   if (search && search.trim()) {
     const q = search.trim().replace(/'/g, "''")
-    const isNum = /^\d+$/.test(q)
     const filters: string[] = [
       `contains(OrderHed_PONum, '${q}')`,
       `contains(OrderDtl_PartNum, '${q}')`,
@@ -64,7 +69,7 @@ export async function fetchJobOrders(search?: string): Promise<JobOrder[]> {
       `contains(OrderHed_Company, '${q}')`,
       `contains(OrderDtl_LineDesc, '${q}')`,
     ]
-    if (isNum) {
+    if (isNum(q)) {
       filters.push(`OrderHed_OrderNum eq ${q}`)
     }
     params.push(`$filter=${filters.join(' or ')}`)
@@ -72,12 +77,24 @@ export async function fetchJobOrders(search?: string): Promise<JobOrder[]> {
   return odataGet(epicorUrl(SUMMARY_URL, params)) as Promise<JobOrder[]>
 }
 
-const MTL_FIELDS = 'JobHead_Plant,Calculated_List_Material'
+/**
+ * Targeted sync: fetches ONLY the rows for a single Order Number. The $filter
+ * is pushed down to SQL in Epicor, so this returns in seconds instead of the
+ * 30-48s full-BAQ app-tier compute. Used by Sync Data when the search bar holds
+ * a bare numeric Order Num; the caller merges the result into the cache rather
+ * than replacing the whole dataset.
+ */
+export async function fetchJobOrderByNum(orderNum: number): Promise<JobOrder[]> {
+  const params = [`$orderby=${ORDERBY}`, `$filter=OrderHed_OrderNum eq ${orderNum}`]
+  return odataGet(epicorUrl(SUMMARY_URL, params)) as Promise<JobOrder[]>
+}
 
 // Fetches only the MTL records whose JobHead_Plant is required by the Job Order
 // Summary data. Unique plants are turned into a single OData $filter (batched
 // into a few requests when the filter would get too long) so the entire
 // Naz_PackingOrderSheetMTL dataset is never downloaded.
+const MTL_FIELDS = 'JobHead_Plant,Calculated_List_Material'
+
 export async function fetchPackingMaterials(plants: string[]): Promise<PackingMaterial[]> {
   const uniq = Array.from(new Set(plants.map((p) => p.trim()).filter(Boolean)))
   if (uniq.length === 0) return []

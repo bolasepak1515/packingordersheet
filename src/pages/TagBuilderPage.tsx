@@ -12,6 +12,7 @@ import { queryKeys } from '@/hooks/queryKeys'
 import { useTagTemplate, usePackingSheetTemplate, useSaveTagTemplate, useSavePackingSheetTemplate } from '@/hooks/useMasterData'
 import { supabase } from '@/lib/supabase'
 import type { TagElement, ElementType } from '@/components/tagbuilder/types'
+import { sanitizeTemplateElements } from '@/components/tagbuilder/sanitize'
 
 const CANVAS_PRESETS = [
   { label: '4×6 in', w: 600, h: 900 },
@@ -43,8 +44,9 @@ export default function TagBuilderPage() {
     const tpl = (cached && Array.isArray(cached.elements) && cached.elements.length > 0)
       ? cached.elements
       : getDefaultTemplate()
-    _seed = Math.max(0, ...tpl.map((e) => parseInt(e.id.replace('el_', ''))))
-    return tpl
+    const cleaned = sanitizeTemplateElements(tpl)
+    _seed = Math.max(0, ...cleaned.map((e) => parseInt(e.id.replace('el_', ''))))
+    return cleaned
   })
   const [selectedId, setSelectedId] = useState<string | null>(null)
   const [tagPreset, setTagPreset] = useState(CANVAS_PRESETS[2])
@@ -89,9 +91,11 @@ export default function TagBuilderPage() {
     if (activeTpl === undefined) return
     if (lastAppliedRef.current === activeTpl) return
     lastAppliedRef.current = activeTpl
-    const els = (activeTpl && Array.isArray(activeTpl.elements) && activeTpl.elements.length > 0)
-      ? activeTpl.elements
-      : (mode === 'tag' ? getDefaultTemplate() : getDefaultSheetTemplate())
+    const els = sanitizeTemplateElements(
+      (activeTpl && Array.isArray(activeTpl.elements) && activeTpl.elements.length > 0)
+        ? activeTpl.elements
+        : (mode === 'tag' ? getDefaultTemplate() : getDefaultSheetTemplate()),
+    )
     _seed = Math.max(0, ...els.map((e: TagElement) => parseInt(e.id.replace('el_', ''))))
     setElements(els)
     setSelectedId(null)
@@ -103,7 +107,10 @@ export default function TagBuilderPage() {
     ? canvasPreset.h
     : (elements.length === 0
       ? canvasPreset.h
-      : Math.max(60, ...elements.map((e) => e.y + e.height + 20)))
+      : Math.max(60, ...elements.map((e) => {
+        const v = (e.y || 0) + (e.height || 0) + 20
+        return isFinite(v) ? v : 60
+      })))
 
   /* Undo / Redo */
   const pastRef = useRef<TagElement[][]>([])
@@ -198,7 +205,7 @@ export default function TagBuilderPage() {
         const data = JSON.parse(ev.target?.result as string) as TagElement[]
         if (!Array.isArray(data)) throw new Error('Invalid format')
         saveHistory()
-        setElements(data)
+        setElements(sanitizeTemplateElements(data))
         setSelectedId(null)
       } catch {
         alert('Invalid template file')

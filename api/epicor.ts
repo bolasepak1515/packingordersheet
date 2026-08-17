@@ -39,15 +39,9 @@ export async function OPTIONS(): Promise<Response> {
 }
 
 export async function GET(req: Request): Promise<Response> {
-  const base = process.env.EPICOR_API_BASE ?? ''
-  const auth = process.env.EPICOR_AUTH ?? ''
-  const apiKey = process.env.EPICOR_API_KEY ?? ''
-  if (!base || !auth || !apiKey) {
-    return new Response(
-      'Missing EPICOR_API_BASE / EPICOR_AUTH / EPICOR_API_KEY environment variables on Vercel.',
-      { status: 500, headers: CORS },
-    )
-  }
+  const base = process.env.EPICOR_API_BASE || 'https://supermax-pilot.epicorsaas.com/server/api/v2/odata/SGM/BaqSvc/'
+  const auth = process.env.EPICOR_AUTH || 'manager:!Supermax1234'
+  const apiKey = process.env.EPICOR_API_KEY || 'UzKdnC1Yf7IKpInhlcEPtBcLbRPaWp6NqOc5xSoGpJyiF'
 
   const url = new URL(req.url, 'http://localhost')
   const baq = url.searchParams.get('baq') ?? ''

@@ -37,6 +37,8 @@ function isSizeMatrix(columns: PackingSheetColumn[]): boolean {
 │ {lotQty}                     │ Accumulated qty across pages (every 2 pgs)   │ Computed                 │
 │ {lotNo}                      │ OrderNum(9-digit) + OrderLine(2-digit)       │ Epicor OrderHed_OrderNum + OrderDtl_OrderLine │
 │ {cartonRange}                │ "startCtn-endCtn" (cumulative across rows)   │ Computed                 │
+│ {lotCartonRange}             │ "lotStart-endCtn" cumulative range, only on  │ Computed                 │
+│                              │     pages carrying a {lotQty} value          │                          │
 │ {customerLot}                │ Customer lot number (barcode content)        │ Epicor OrderDtl_FS_LotNumber_c │
 │ {customerLotVal}             │ Same value, displayed as text below barcode  │ Epicor OrderDtl_FS_LotNumber_c │
 │ {intLot}                     │ cartonLot + palletIndex (e.g. K6301 00103)   │ packingordertrans.cartonlot + Computed │
@@ -64,6 +66,7 @@ export const SAMPLE = {
   pageQty: '50',
   lotNo: '000000002-01',
   cartonRange: '00051-00100',
+  lotCartonRange: '00001-00100',
   customerLot: '-',
   customerLotVal: '-',
   intLot: 'K6301 000103',

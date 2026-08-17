@@ -150,10 +150,11 @@ export async function generateMiniLotPdf(row: JobOrder, allData: JobOrder[], opt
 
   const pageData: {
     p: number; pageQty: number; pageInners: number; pageCartons: number
-    cartonRangeStr: string; internalLot: string; qrContent: string; lotQty: number | null
+    cartonRangeStr: string; lotCartonRange: string; internalLot: string; qrContent: string; lotQty: number | null
   }[] = []
 
   let lotAccum = 0
+  let lotCartonStartIndex = rowCartonStart
   let runningCartonStart = rowCartonStart
 
   for (let p = 1; p <= totalPages; p++) {
@@ -173,15 +174,23 @@ export async function generateMiniLotPdf(row: JobOrder, allData: JobOrder[], opt
     runningCartonStart = cartonEndIndex + 1
     const cartonRangeStr = `${padNum(cartonStartIndex, 4)}-${padNum(cartonEndIndex, 4)}`
 
+    // Each lot spans two pages: its first page opens the lot (recording the lot's
+    // first carton), its second page closes it with the accumulated {lotQty}.
+    if (p % 2 === 1) lotCartonStartIndex = cartonStartIndex
     lotAccum += pageQty
     const lotQty = (p % 2 === 0 || p === totalPages) ? lotAccum : null
     if (lotQty !== null) lotAccum = 0
+
+    // Carton range of the whole current lot (first carton of the lot -> last
+    // carton of this closing page). Only populated on pages carrying {lotQty},
+    // so page 2 renders "0001-0100", page 4 "0101-0200", page 6 "0201-0300".
+    const lotCartonRange = lotQty !== null ? `${padNum(lotCartonStartIndex, 4)}-${padNum(cartonEndIndex, 4)}` : ''
 
     // jobInfo QR always shows, even when a component (e.g. customer lot) is empty
     const qrContent = [jobNum, lotQty ?? 0, customer, lotNoForRow, cartonRangeStr, internalLot, p].join(',')
 
     pageData.push({
-      p, pageQty, pageInners, pageCartons, cartonRangeStr, internalLot,
+      p, pageQty, pageInners, pageCartons, cartonRangeStr, lotCartonRange, internalLot,
       qrContent,
       lotQty,
     })
@@ -209,6 +218,7 @@ export async function generateMiniLotPdf(row: JobOrder, allData: JobOrder[], opt
       lotQty: pd.lotQty !== null ? String(pd.lotQty) : '',
       lotNo: lotNoForRow,
       cartonRange: pd.cartonRangeStr,
+      lotCartonRange: pd.lotCartonRange,
       customerLot: customer || '-',
       customerLotVal: customer || '-',
       intLot: pd.internalLot,

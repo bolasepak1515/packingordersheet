@@ -4,34 +4,35 @@ import { supabase } from '@/lib/supabase'
 import Portal from './Portal'
 
 interface Props {
+  /** Sites involved in the order being printed (from JobHead_Plant). */
+  sites: string[]
   defaultSite?: string
   defaultCompanyName?: string
-  onConfirm: (site: string, companyName: string) => void
+  onConfirm: (site: string, companyName: string, printAll: boolean) => void
   onClose: () => void
 }
 
-export default function PackingSheetOptionsModal({ defaultSite, defaultCompanyName, onConfirm, onClose }: Props) {
+export default function PackingSheetOptionsModal({ sites, defaultSite, defaultCompanyName, onConfirm, onClose }: Props) {
   const [loading, setLoading] = useState(true)
-  const [sites, setSites] = useState<string[]>([])
-  const [companyNames, setCompanyNames] = useState<string[]>([])
-  const [site, setSite] = useState(defaultSite ?? '')
-  const [companyName, setCompanyName] = useState(defaultCompanyName ?? '')
+  const [companyMap, setCompanyMap] = useState<Record<string, string>>({})
+  const [site, setSite] = useState('')
+  const [printAll, setPrintAll] = useState(false)
 
   useEffect(() => {
     let cancelled = false
     void (async () => {
       try {
         const { data } = await supabase.from('packinglogin').select('site, companyname')
-        const rows = (data ?? []) as { site: string | null; companyname: string | null }[]
-        const uniqueSites = Array.from(new Set(rows.map((r) => r.site?.trim()).filter(Boolean))) as string[]
-        const uniqueNames = Array.from(new Set(rows.map((r) => r.companyname?.trim()).filter(Boolean))) as string[]
+        const map: Record<string, string> = {}
+        for (const r of (data ?? []) as { site: string | null; companyname: string | null }[]) {
+          const s = r.site?.trim()
+          const c = r.companyname?.trim()
+          if (s && c && !(s in map)) map[s] = c
+        }
         if (cancelled) return
-        setSites(uniqueSites)
-        setCompanyNames(uniqueNames)
-        setSite((prev) => (prev && uniqueSites.includes(prev) ? prev : (uniqueSites[0] ?? '')))
-        setCompanyName((prev) => (prev && uniqueNames.includes(prev) ? prev : (uniqueNames[0] ?? '')))
+        setCompanyMap(map)
       } catch {
-        // fall back to empty lists
+        // fall back to an empty map
       } finally {
         if (!cancelled) setLoading(false)
       }
@@ -39,7 +40,20 @@ export default function PackingSheetOptionsModal({ defaultSite, defaultCompanyNa
     return () => { cancelled = true }
   }, [])
 
-  const canConfirm = !loading && Boolean(site || companyName)
+  // Only the sites involved in this order are offered; default to the admin's own
+  // site when it is involved, otherwise the first involved site.
+  useEffect(() => {
+    if (sites.length > 0) {
+      setSite((prev) => {
+        if (prev && sites.includes(prev)) return prev
+        if (defaultSite && sites.includes(defaultSite)) return defaultSite
+        return sites[0]
+      })
+    }
+  }, [sites, defaultSite])
+
+  const companyName = companyMap[site] ?? defaultCompanyName ?? ''
+  const canConfirm = !loading && Boolean(site)
 
   const selectStyle: React.CSSProperties = {
     width: '100%',
@@ -94,27 +108,36 @@ export default function PackingSheetOptionsModal({ defaultSite, defaultCompanyNa
 
         <div style={{ padding: 20, display: 'flex', flexDirection: 'column', gap: 16 }}>
           {loading ? (
-            <div style={{ fontSize: 13, color: '#64748b' }}>Loading sites &amp; company names…</div>
+            <div style={{ fontSize: 13, color: '#64748b' }}>Loading company info…</div>
           ) : (
             <>
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>Site</label>
                 <select value={site} onChange={(e) => setSite(e.target.value)} style={selectStyle}>
-                  {sites.length === 0 && <option value="">No sites available</option>}
+                  {sites.length === 0 && <option value="">No sites involved</option>}
                   {sites.map((s) => (
                     <option key={s} value={s}>{s}</option>
                   ))}
                 </select>
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+                  Only the sites involved in this order are listed.
+                </div>
               </div>
               <div>
                 <label style={{ display: 'block', fontSize: 12, fontWeight: 600, color: '#475569', marginBottom: 6 }}>Company Name</label>
-                <select value={companyName} onChange={(e) => setCompanyName(e.target.value)} style={selectStyle}>
-                  {companyNames.length === 0 && <option value="">No company names available</option>}
-                  {companyNames.map((c) => (
-                    <option key={c} value={c}>{c}</option>
-                  ))}
-                </select>
+                <input
+                  readOnly
+                  value={companyName || '—'}
+                  style={{ ...selectStyle, color: '#64748b', background: '#f1f5f9', cursor: 'not-allowed' }}
+                />
+                <div style={{ fontSize: 11, color: '#94a3b8', marginTop: 4 }}>
+                  Auto-detected from the packinglogin table for the selected site.
+                </div>
               </div>
+              <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: 13, color: '#334155', cursor: 'pointer' }}>
+                <input type="checkbox" checked={printAll} onChange={(e) => setPrintAll(e.target.checked)} style={{ width: 16, height: 16, cursor: 'pointer' }} />
+                Print All (include every involved site's data in the Loading Sequence)
+              </label>
               <div style={{ display: 'flex', justifyContent: 'flex-end', gap: 10, marginTop: 4 }}>
                 <button
                   onClick={onClose}
@@ -124,7 +147,7 @@ export default function PackingSheetOptionsModal({ defaultSite, defaultCompanyNa
                 </button>
                 <button
                   disabled={!canConfirm}
-                  onClick={() => onConfirm(site, companyName)}
+                  onClick={() => onConfirm(site, companyName, printAll)}
                   style={{
                     padding: '8px 16px',
                     borderRadius: 8,

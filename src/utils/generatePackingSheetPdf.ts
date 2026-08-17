@@ -47,14 +47,18 @@ export interface OutRow {
 /** Returns the ungrouped page rows (one row per page, separated by size). */
 export function buildRawRows(entries: Entry[]): OutRow[] {
   const out: OutRow[] = []
+  // Sequence numbers restart for each base part group (and size within it), so
+  // e.g. every part's XS pages read XS1, XS2 instead of continuing XS3, XS4.
   const counters: Record<string, number> = {}
-  let prevSize: string | null = null
+  let prevKey: string | null = null
   for (const e of entries) {
+    const base = extractBasePartGroup(e.partNum)
     const size = e.size || 'X'
-    if (prevSize !== null && prevSize !== size) out.push({ separator: true } as OutRow)
-    counters[size] = (counters[size] ?? 0) + 1
+    const key = `${base}\u0000${size}`
+    if (prevKey !== null && prevKey !== key) out.push({ separator: true } as OutRow)
+    counters[key] = (counters[key] ?? 0) + 1
     out.push({
-      sequence: `${size}${counters[size]}`,
+      sequence: `${size}${counters[key]}`,
       palletNo: e.palletNo,
       lotInternal: e.lotInternal,
       lotCustomer: e.customer,
@@ -63,9 +67,9 @@ export function buildRawRows(entries: Entry[]): OutRow[] {
       cartonNo: e.cartonNo,
       ctn: e.ctn,
       inner: e.inner,
-      partGroup: extractBasePartGroup(e.partNum),
+      partGroup: base,
     })
-    prevSize = size
+    prevKey = key
   }
   return out
 }
@@ -343,6 +347,13 @@ ${content}
 export interface PackingSheetOptions {
   site?: string
   companyName?: string
+  /** When true, the loading-sequence table is NOT filtered by site — every
+   *  involved site's pallets/lots print (admin "Print All" tick). */
+  printAll?: boolean
+  /** Maps an upper-cased Calculated_PlantPacking value (e.g. "60A", "16C") to the
+   *  canonical plant name (e.g. "6060A", "43816C") so the loading-sequence site
+   *  filter matches the logged-in user's site regardless of the code format. */
+  packByMap?: Record<string, string>
 }
 
 export async function generatePackingSheetPdf(lines: JobOrder[], options?: PackingSheetOptions) {
@@ -430,7 +441,22 @@ export async function generatePackingSheetPdf(lines: JobOrder[], options?: Packi
   }
 
   const sizeMatrixOut = buildSizeMatrixRows(entries)
-  const rawOut = buildRawRows(entries)
+
+  // The size-matrix table always summarises every line, but the loading-sequence
+  // table is scoped to the selected packing site: a user logged in as "6060A"
+  // only sees that site's pallets/lots. With no site selected the full list shows.
+  // Calculated_PlantPacking may be a short code ("60A") or full name ("6060A");
+  // packByMap resolves the short code back to the canonical site name.
+  const siteFilter = options?.printAll ? '' : (options?.site ?? '').trim()
+  const packByMap = options?.packByMap ?? {}
+  const loadingEntries = siteFilter
+    ? entries.filter((e) => {
+        const packBy = (e.packBy ?? '').trim()
+        const resolved = packByMap[packBy.toUpperCase()] ?? packBy
+        return resolved === siteFilter
+      })
+    : entries
+  const rawOut = buildRawRows(loadingEntries)
 
   // Load the active packing-sheet template (saved via Design Builder, else default)
   let template: TagElement[] | null = null

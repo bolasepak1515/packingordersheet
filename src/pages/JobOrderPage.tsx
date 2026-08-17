@@ -6,7 +6,7 @@ import { queryKeys } from '@/hooks/queryKeys'
 import { useJobOrders, useSavePackingTrans } from '@/hooks/useJobOrders'
 import { fetchPackingMaterials, fetchJobOrders, fetchJobOrderByNum, isNum } from '@/lib/api'
 import { usePlantCodes, useSizes, usePackingTrans } from '@/hooks/useMasterData'
-import { validateJobOrderLine, calculateLinePreviewData, isPackingSheetReady } from '@/utils/batchValidation'
+import { validateJobOrderLine, calculateLinePreviewData, isPackingSheetReady, isMfgsysLine } from '@/utils/batchValidation'
 import type { BatchLineStatus, LinePreviewData } from '@/utils/batchValidation'
 import { useAuth } from '@/contexts/AuthContext'
 import Message from '@/components/Message'
@@ -93,6 +93,51 @@ export default function JobOrderPage() {
     }
     return m
   }, [plantLookup])
+
+  // Reverse lookup (plant code -> plant name). The BAQ's JobHead_Plant can come
+  // back as either the plant code ("K") or the plant name ("43816C"), while
+  // user.site is always the plant name. Resolve to a canonical name before any
+  // site comparison so both formats match the logged-in user's site.
+  const plantCodeToName = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const p of plantLookup) {
+      if (p.plant_code && p.plant_name) m[p.plant_code.trim().toUpperCase()] = p.plant_name
+    }
+    return m
+  }, [plantLookup])
+
+  const resolvePlant = useCallback((plant?: string | null): string => {
+    if (!plant) return ''
+    const t = plant.trim()
+    return plantCodeToName[t.toUpperCase()] ?? t
+  }, [plantCodeToName])
+
+  // Maps Calculated_PlantPacking values (which can be short codes like "60A",
+  // "16C" or full names like "6060A", "43816C") to the canonical plant name of
+  // the row they belong to, so the packing sheet's loading-sequence site filter
+  // matches the logged-in user's site. Only rows with a non-empty plant are
+  // recorded, so a code that also appears on blank-plant rows is not poisoned.
+  const packByToName = useMemo(() => {
+    const m: Record<string, string> = {}
+    for (const d of data ?? []) {
+      const p = (d.Calculated_PlantPacking ?? '').trim().toUpperCase()
+      if (!p || p in m) continue
+      const name = resolvePlant(d.JobHead_Plant)
+      if (name) m[p] = name
+    }
+    return m
+  }, [data, resolvePlant])
+
+  // Sites involved in the order currently selected for the admin packing sheet,
+  // used to limit the Packing Sheet Options site dropdown.
+  const involvedSites = useMemo(() => {
+    const s = new Set<string>()
+    for (const d of packingSheetRows ?? []) {
+      const n = resolvePlant(d.JobHead_Plant)
+      if (n) s.add(n)
+    }
+    return Array.from(s)
+  }, [packingSheetRows, resolvePlant])
 
   const sizeMap = useMemo(() => {
     const m: Record<string, string> = {}
@@ -255,7 +300,7 @@ export default function JobOrderPage() {
     )
   }, [deferredSearch, cartonLots])
 
-  const runPackingSheet = useCallback((orderRows: JobOrder[], opts: { site?: string; companyName?: string }) => {
+  const runPackingSheet = useCallback((orderRows: JobOrder[], opts: { site?: string; companyName?: string; packByMap?: Record<string, string>; printAll?: boolean }) => {
     import('@/utils/generatePackingSheetPdf')
       .then((m) => m.generatePackingSheetPdf(orderRows, opts))
       .catch((err: unknown) => alert('Packing sheet failed: ' + (err instanceof Error ? err.message : String(err))))
@@ -265,9 +310,26 @@ export default function JobOrderPage() {
     if (user && user.role === 'admin') {
       setPackingSheetRows(orderRows)
     } else {
-      runPackingSheet(orderRows, { site: user?.site ?? '', companyName: user?.companyname ?? '' })
+      runPackingSheet(orderRows, { site: user?.site ?? '', companyName: user?.companyname ?? '', packByMap: packByToName })
     }
-  }, [runPackingSheet, user])
+  }, [runPackingSheet, user, packByToName])
+
+  // Child (lines) modal Packing Sheet: same conditions as the parent button —
+  // non-admin needs their site present, MFGSYS lines are dropped, and the whole
+  // non-MFGSYS order is passed so the size-matrix shows every part while the
+  // loading sequence is scoped to options.site inside the PDF generator.
+  const handleChildPackingSheet = useCallback((orderRows: JobOrder[]) => {
+    const printable = (orderRows ?? []).filter((d) => !isMfgsysLine(d))
+    if (printable.length === 0) return
+    if (user && user.role !== 'admin') {
+      const atMySite = printable.some((d) => resolvePlant(d.JobHead_Plant) === user.site)
+      if (!atMySite) {
+        alert('Access Denied: You are only allowed to print packing sheets for your assigned site.')
+        return
+      }
+    }
+    handlePackingSheetClick(printable)
+  }, [handlePackingSheetClick, resolvePlant, user])
 
   const handleParentFilterChange = useCallback((key: string, val: string) => {
     setParentColumnFilters((p) => ({ ...p, [key]: val }))
@@ -289,8 +351,25 @@ export default function JobOrderPage() {
   const handleParentPackingSheet = useCallback((p: ParentOrder) => {
     const rows = (data ?? []).filter((d) => d.OrderHed_Company === p.company && d.OrderHed_OrderNum === p.orderNum)
     if (rows.length === 0) return
-    handlePackingSheetClick(rows)
-  }, [data, handlePackingSheetClick])
+    if (user && user.role !== 'admin') {
+      const atMySite = rows.some((d) => resolvePlant(d.JobHead_Plant) === user.site)
+      if (!atMySite) {
+        alert('Access Denied: You are only allowed to print packing sheets for your assigned site.')
+        return
+      }
+      // Pass the full non-MFGSYS order so the size-matrix table shows every part
+      // (e.g. both 6060A and 6061A parts of one order). The loading-sequence
+      // table is scoped to the user's site inside generatePackingSheetPdf via
+      // options.site (packBy === site), so only the user's own pallets/lots print.
+      const printable = rows.filter((d) => !isMfgsysLine(d))
+      if (printable.length === 0) return
+      handlePackingSheetClick(printable)
+      return
+    }
+    const printable = rows.filter((d) => !isMfgsysLine(d))
+    if (printable.length === 0) return
+    handlePackingSheetClick(printable)
+  }, [data, handlePackingSheetClick, resolvePlant, user])
 
   const parentBase = useMemo(() => (data ?? []).filter(matchesSearch), [data, matchesSearch])
 
@@ -313,18 +392,29 @@ export default function JobOrderPage() {
   }), [])
 
   const parentRows = useMemo<ParentOrder[]>(() => {
-    type Group = ParentOrder & { ppCounts: Map<string, number>; ppCreated: Map<string, number> }
+    type Group = ParentOrder & {
+      ppCounts: Map<string, number>
+      ppCreated: Map<string, number>
+      siteCounts: Map<string, number>
+      siteReady: Map<string, number>
+    }
     const map = new Map<string, Group>()
     for (const d of parentBase) {
       const key = `${d.OrderHed_Company}|${d.OrderHed_OrderNum}`
       let g = map.get(key)
       if (!g) {
-        g = { company: d.OrderHed_Company, orderNum: d.OrderHed_OrderNum, orderDate: '', needBy: '', poNum: '', lineCount: 0, createdCount: 0, notAssignSiteCount: 0, noJobCount: 0, totalCtn: 0, packingReady: true, plantPacking: [], ppCounts: new Map(), ppCreated: new Map() }
+        g = { company: d.OrderHed_Company, orderNum: d.OrderHed_OrderNum, orderDate: '', needBy: '', poNum: '', lineCount: 0, createdCount: 0, notAssignSiteCount: 0, noJobCount: 0, totalCtn: 0, packingReady: true, sites: [], readySites: [], plantPacking: [], ppCounts: new Map(), ppCreated: new Map(), siteCounts: new Map(), siteReady: new Map() }
         map.set(key, g)
       }
       g.lineCount++
+      const plant = resolvePlant(d.JobHead_Plant)
+      if (plant && !g.sites.includes(plant)) g.sites.push(plant)
+      if (plant && !isMfgsysLine(d)) {
+        g.siteCounts.set(plant, (g.siteCounts.get(plant) ?? 0) + 1)
+        if (isPackingSheetReady(d, cartonLots)) g.siteReady.set(plant, (g.siteReady.get(plant) ?? 0) + 1)
+      }
       if (!d.JobHead_JobNum) g.noJobCount++
-      if (!isPackingSheetReady(d, cartonLots)) g.packingReady = false
+      if (!isMfgsysLine(d) && !isPackingSheetReady(d, cartonLots)) g.packingReady = false
       if (cartonLots[`${d.JobHead_JobNum}|${d.OrderDtl_PartNum}`]) g.createdCount++
       if (!g.orderDate && d.OrderHed_OrderDate) g.orderDate = d.OrderHed_OrderDate
       if (!g.needBy && d.OrderDtl_NeedByDate) g.needBy = d.OrderDtl_NeedByDate
@@ -339,8 +429,11 @@ export default function JobOrderPage() {
       }
     }
     return Array.from(map.values())
-      .map(({ ppCounts, ppCreated, ...rest }) => ({
+      .map(({ ppCounts, ppCreated, siteCounts, siteReady, ...rest }) => ({
         ...rest,
+        readySites: Array.from(siteCounts.entries())
+          .filter(([s, n]) => (siteReady.get(s) ?? 0) >= n)
+          .map(([s]) => s),
         plantPacking: Array.from(ppCounts.entries())
           .sort((a, b) => b[1] - a[1] || a[0].localeCompare(b[0]))
           .map(([pp, n]) => {
@@ -354,7 +447,7 @@ export default function JobOrderPage() {
         ),
       )
       .sort((a, b) => a.orderNum - b.orderNum)
-  }, [parentBase, parentColumnFilters, parentFilterAccessors, cartonLots])
+  }, [parentBase, parentColumnFilters, parentFilterAccessors, cartonLots, resolvePlant])
 
   const parentChildren = useMemo(() => {
     if (!parentOpen) return []
@@ -680,6 +773,7 @@ export default function JobOrderPage() {
         columnFilters={parentColumnFilters}
         showFilters={parentShowFilters}
         loading={isLoading}
+        user={user}
         onSearch={setSearch}
         onFilterChange={handleParentFilterChange}
         onToggleFilters={handleParentToggleFilters}
@@ -709,18 +803,20 @@ export default function JobOrderPage() {
           onRowClick={setSelectedRow}
           onAction={handleAction}
           onGeneratePdf={handleGeneratePdf}
-          onPackingSheet={handlePackingSheetClick}
+          onPackingSheet={handleChildPackingSheet}
           onCreateAll={() => parentOpen && handleCreateAll(parentOpen.company, parentOpen.orderNum)}
+          resolvePlant={resolvePlant}
           onClose={() => setParentOpen(null)}
         />
       )}
 
       {packingSheetRows && (
         <PackingSheetOptionsModal
+          sites={involvedSites}
           defaultSite={user?.site}
           defaultCompanyName={user?.companyname}
-          onConfirm={(site, companyName) => {
-            runPackingSheet(packingSheetRows, { site, companyName })
+          onConfirm={(site, companyName, printAll) => {
+            runPackingSheet(packingSheetRows, { site, companyName, packByMap: packByToName, printAll })
             setPackingSheetRows(null)
           }}
           onClose={() => setPackingSheetRows(null)}

@@ -65,6 +65,7 @@ export const TOKENS = [
   { token: '{lotQty}', label: 'Qty/Lot (KPCS)' },
   { token: '{lotNo}', label: 'Lot Number' },
   { token: '{cartonRange}', label: 'Carton Range' },
+  { token: '{lotCartonRange}', label: 'Carton Range (Lot)' },
   { token: '{customerLot}', label: 'Customer Lot' },
   { token: '{customerLotVal}', label: 'Customer Lot (text)' },
   { token: '{intLot}', label: 'Internal Lot' },

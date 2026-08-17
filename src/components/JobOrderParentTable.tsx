@@ -3,9 +3,8 @@ import { Check, Layers, FileText } from 'lucide-react'
 import { formatDateOrRaw } from '@/utils/format'
 import DataTable from './DataTable'
 import SearchBox from './SearchBox'
-import ActionMenu from './ActionMenu'
-import type { ActionMenuItem } from './ActionMenu'
 import type { Column } from './DataTable'
+import type { SessionUser } from '@/types'
 
 export interface PlantPackingEntry {
   code: string
@@ -70,6 +69,8 @@ export interface ParentOrder {
   noJobCount: number
   totalCtn: number
   packingReady: boolean
+  sites: string[]
+  readySites: string[]
   plantPacking: PlantPackingEntry[]
 }
 
@@ -78,6 +79,7 @@ interface Props {
   columnFilters: Record<string, string>
   showFilters: boolean
   loading?: boolean
+  user?: SessionUser | null
   onSearch: (val: string) => void
   onFilterChange: (key: string, val: string) => void
   onToggleFilters: () => void
@@ -88,7 +90,7 @@ interface Props {
 }
 
 function JobOrderParentTable({
-  rows, columnFilters, showFilters, loading, onSearch, onFilterChange, onToggleFilters, onClearFilters, onRowClick, onCreateAll, onPackingSheet,
+  rows, columnFilters, showFilters, loading, user, onSearch, onFilterChange, onToggleFilters, onClearFilters, onRowClick, onCreateAll, onPackingSheet,
 }: Props) {
   const [search, setSearch] = useState('')
 
@@ -216,22 +218,56 @@ function JobOrderParentTable({
       )
     } },
     ...(onCreateAll ? [{
-      key: 'Actions', label: 'Actions', filterable: false, align: 'center' as const, stickyRight: true,
+      key: 'Action', label: 'Action', filterable: false, align: 'center' as const, stickyRight: true,
       render: (r: ParentOrder) => {
-        const items: ActionMenuItem[] = [
-          ...(onPackingSheet ? [{
-            label: 'Packing Sheet',
-            icon: FileText,
-            disabled: !r.packingReady,
-            title: r.packingReady ? undefined : 'All lines must have an internal lot number, a Job Num and Pcs/Inner & Inner/CTN values (excludes MFGSYS site).',
-            onClick: () => onPackingSheet(r),
-          }] : []),
-          { label: 'Create All Lots', icon: Layers, onClick: () => onCreateAll(r) },
-        ]
-        return <ActionMenu items={items} />
+        const isAdmin = !user || user.role === 'admin'
+        const siteAllowed = isAdmin || (!!user.site && r.sites.includes(user.site))
+        const mySiteReady = isAdmin || (!!user.site && r.readySites.includes(user.site))
+        const locked = !siteAllowed || !mySiteReady
+        let sheetTitle = 'Packing Sheet'
+        if (!siteAllowed) sheetTitle = 'Access Denied: You are only allowed to print packing sheets for your assigned site.'
+        else if (isAdmin) sheetTitle = r.packingReady ? 'Packing Sheet' : 'All lines must have an internal lot number, a Job Num and Pcs/Inner & Inner/CTN values (excludes MFGSYS site).'
+        else sheetTitle = mySiteReady ? 'Packing Sheet' : 'All lines at your site must have an internal lot number, a Job Num and Pcs/Inner & Inner/CTN values.'
+        return (
+          <div style={{ display: 'flex', gap: 4, justifyContent: 'center', alignItems: 'center' }}>
+            {onPackingSheet && (
+              <button
+                type="button"
+                title={sheetTitle}
+                disabled={locked}
+                onClick={(e) => { e.stopPropagation(); onPackingSheet(r) }}
+                style={{
+                  display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                  width: 30, height: 30, borderRadius: 8, border: 'none', cursor: 'pointer',
+                  background: 'none', color: 'var(--text-secondary)', opacity: locked ? 0.35 : 1,
+                  transition: 'background 0.15s',
+                }}
+                onMouseEnter={(e) => { if (!locked) e.currentTarget.style.background = 'var(--bg-hover)' }}
+                onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+              >
+                <FileText size={18} />
+              </button>
+            )}
+            <button
+              type="button"
+              title="Create All Lots"
+              onClick={(e) => { e.stopPropagation(); onCreateAll(r) }}
+              style={{
+                display: 'inline-flex', alignItems: 'center', justifyContent: 'center',
+                width: 30, height: 30, borderRadius: 8, border: 'none', cursor: 'pointer',
+                background: 'none', color: 'var(--text-secondary)',
+                transition: 'background 0.15s',
+              }}
+              onMouseEnter={(e) => { e.currentTarget.style.background = 'var(--bg-hover)' }}
+              onMouseLeave={(e) => { e.currentTarget.style.background = 'none' }}
+            >
+              <Layers size={18} />
+            </button>
+          </div>
+        )
       },
     }] : []),
-  ], [onCreateAll, onRowClick, onPackingSheet])
+  ], [onCreateAll, onRowClick, onPackingSheet, user])
 
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 12, width: '100%' }}>

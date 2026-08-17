@@ -78,6 +78,29 @@ describe('buildRawRows', () => {
     expect(data[1].qty).toBe('20')
     expect(data[0].partGroup).toBe('NURTE-TUR-2.2PFSN-FTCB')
   })
+
+  it('restarts the sequence number for each base part group', () => {
+    const out = buildRawRows([
+      entry('KRUNO-HRV-SSLPLP5.5-XS-01', '50', 'XS', 1, 50),
+      entry('KRUNO-HRV-SSLPLP5.5-XS-02', '50', 'XS', 51, 100),
+      entry('KRUNO-HRV-MTPCPF5.7-XS-01', '50', 'XS', 401, 450),
+      entry('KRUNO-HRV-MTPCPF5.7-XS-02', '50', 'XS', 451, 500),
+    ])
+    const data = out.filter((r) => !r.separator)
+    expect(data.map((r) => r.sequence)).toEqual(['XS1', 'XS2', 'XS1', 'XS2'])
+    expect(data[0].partGroup).toBe('KRUNO-HRV-SSLPLP5.5')
+    expect(data[2].partGroup).toBe('KRUNO-HRV-MTPCPF5.7')
+  })
+
+  it('restarts the sequence number per size within the same part group', () => {
+    const out = buildRawRows([
+      entry('KRUNO-HRV-SSLPLP5.5-XS-01', '50', 'XS', 1, 50),
+      entry('KRUNO-HRV-SSLPLP5.5-S-01', '50', 'S', 51, 100),
+      entry('KRUNO-HRV-SSLPLP5.5-S-02', '50', 'S', 101, 150),
+    ])
+    const data = out.filter((r) => !r.separator)
+    expect(data.map((r) => r.sequence)).toEqual(['XS1', 'S1', 'S2'])
+  })
 })
 
 describe('isSizeGroupTable', () => {

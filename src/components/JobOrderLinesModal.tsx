@@ -1,7 +1,7 @@
 import { X, FileText, Layers } from 'lucide-react'
 import JobOrderTable from './JobOrderTable'
 import { padNum } from '@/utils/format'
-import { isPackingSheetReady } from '@/utils/batchValidation'
+import { isPackingSheetReady, isMfgsysLine } from '@/utils/batchValidation'
 import type { JobOrder, PalletInfo } from '@/types'
 import type { SessionUser } from '@/types'
 import Portal from './Portal'
@@ -27,6 +27,9 @@ interface Props {
   onGeneratePdf?: (row: JobOrder) => void
   onPackingSheet?: (rows: JobOrder[]) => void
   onCreateAll?: (rows: JobOrder[]) => void
+  /** Resolves a JobHead_Plant value (code like "K" or name like "43816C") to the
+   *  canonical plant name, so non-admin site access matches user.site. */
+  resolvePlant?: (plant?: string | null) => string
   onClose: () => void
 }
 
@@ -34,10 +37,29 @@ export default function JobOrderLinesModal({
   company, orderNum, rows, cartonLots, cartonNums, palletData, creating, generating,
   columnFilters, showFilters, user,
   onSearch, onFilterChange, onToggleFilters, onClearFilters,
-  onRowClick, onAction, onGeneratePdf, onPackingSheet, onCreateAll, onClose,
+  onRowClick, onAction, onGeneratePdf, onPackingSheet, onCreateAll, resolvePlant, onClose,
 }: Props) {
   const createdCount = rows.filter((r) => cartonLots[`${r.JobHead_JobNum}|${r.OrderDtl_PartNum}`]).length
-  const packingReady = rows.length > 0 && rows.every((r) => isPackingSheetReady(r, cartonLots))
+
+  // Mirror the parent table's Packing Sheet gating: admin requires every
+  // non-MFGSYS line ready; non-admin only requires the lines at their site
+  // ready, and the order must include their site at all.
+  const isAdmin = !user || user.role === 'admin'
+  const mySite = user?.site
+  const eligible = rows.filter((r) =>
+    !isMfgsysLine(r) && (isAdmin || (!!mySite && (resolvePlant?.(r.JobHead_Plant) ?? '') === mySite)),
+  )
+  const siteAllowed = isAdmin || eligible.length > 0
+  const siteReady = eligible.length > 0 && eligible.every((r) => isPackingSheetReady(r, cartonLots))
+  const packingReady = siteAllowed && siteReady
+  const sheetTitle = !siteAllowed
+    ? 'Access Denied: You are only allowed to print packing sheets for your assigned site.'
+    : isAdmin
+      ? 'All lines must have an internal lot number, a Job Num and Pcs/Inner & Inner/CTN values (excludes MFGSYS site).'
+      : 'All lines at your site must have an internal lot number, a Job Num and Pcs/Inner & Inner/CTN values.'
+  const packingStyle = packingReady ? '#94a3b8' : '#475569'
+  const packingCursor = packingReady ? 'pointer' : 'not-allowed'
+  const packingOpacity = packingReady ? 1 : 0.5
   return (
     <Portal>
     <div
@@ -90,8 +112,8 @@ export default function JobOrderLinesModal({
             <button
               onClick={() => onPackingSheet?.(rows)}
               disabled={!packingReady}
-              title={packingReady ? undefined : 'All lines must have an internal lot number, a Job Num and Pcs/Inner & Inner/CTN values (excludes MFGSYS site).'}
-              style={{ color: packingReady ? '#94a3b8' : '#475569', background: 'none', border: '1px solid #475569', cursor: packingReady ? 'pointer' : 'not-allowed', padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, opacity: packingReady ? 1 : 0.5, transition: 'all 0.15s' }}
+              title={packingReady ? undefined : sheetTitle}
+              style={{ color: packingStyle, background: 'none', border: '1px solid #475569', cursor: packingCursor, padding: '6px 12px', borderRadius: 8, fontSize: 12, fontWeight: 600, display: 'flex', alignItems: 'center', gap: 6, opacity: packingOpacity, transition: 'all 0.15s' }}
               onMouseEnter={(e) => { if (packingReady) { e.currentTarget.style.color = '#fff'; e.currentTarget.style.borderColor = '#94a3b8' } }}
               onMouseLeave={(e) => { if (packingReady) { e.currentTarget.style.color = '#94a3b8'; e.currentTarget.style.borderColor = '#475569' } }}
             >
